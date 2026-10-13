@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'dry (lecture seule) / pull (rapatrie le vrai code+manifeste depuis Google, commit dans le dépôt) / deploy (push + nouvelle version) / publish (push + version + branche le web app)'
+        description: 'dry / pull / deploy (push + nouvelle version) / publish (+ branche le web app EXISTANT) / bridge (+ crée ou met à jour un déploiement web app SÉPARÉ pour le pont watchdog, sans toucher au déploiement existant)'
         required: true
         default: 'dry'
 
@@ -84,7 +84,7 @@ jobs:
           fi
 
       - name: Push du code
-        if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
+        if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish' || steps.act.outputs.action == 'bridge'
         run: |
           set +e
           clasp push --force 2>&1 | tee /tmp/push.txt
@@ -96,7 +96,7 @@ jobs:
         shell: bash
 
       - name: Nouvelle version
-        if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
+        if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish' || steps.act.outputs.action == 'bridge'
         id: version
         run: |
           set +e
@@ -123,4 +123,41 @@ jobs:
           CODE=$?
           echo "$OUT" | while IFS= read -r line; do printf '::notice::%s\n' "$line"; done
           exit $CODE
+        shell: bash
+
+      - name: Pont web — créer ou mettre à jour le déploiement SÉPARÉ du watchdog
+        if: steps.act.outputs.action == 'bridge'
+        run: |
+          set +e
+          BRIDGE_ID=$(cat bridge_deployment_id.txt 2>/dev/null || echo "")
+          if [ -z "$BRIDGE_ID" ]; then
+            echo "::notice::Aucun bridge_deployment_id.txt — création d'un NOUVEAU déploiement web app dédié (le déploiement existant n'est pas touché)."
+            OUT=$(clasp deploy --versionNumber "${{ steps.version.outputs.version }}" --description "Pont web watchdog" 2>&1)
+          else
+            echo "::notice::Mise à jour du déploiement pont web existant ($BRIDGE_ID), même URL."
+            OUT=$(clasp deploy --deploymentId "$BRIDGE_ID" --versionNumber "${{ steps.version.outputs.version }}" --description "Pont web watchdog (maj)" 2>&1)
+          fi
+          CODE=$?
+          echo "$OUT" | while IFS= read -r line; do printf '::notice::%s\n' "$line"; done
+          if [ $CODE -ne 0 ]; then
+            exit $CODE
+          fi
+          if [ -z "$BRIDGE_ID" ]; then
+            NEW_ID=$(echo "$OUT" | grep -oE '^- [A-Za-z0-9_-]+' | head -1 | sed 's/^- //')
+            if [ -z "$NEW_ID" ]; then
+              echo "::error::Déploiement créé mais impossible d'en extraire l'ID depuis la sortie clasp."
+              exit 1
+            fi
+            echo "$NEW_ID" > bridge_deployment_id.txt
+            echo "::notice::ID du déploiement pont web: $NEW_ID"
+            echo "::notice::URL du pont web: https://script.google.com/macros/s/$NEW_ID/exec"
+            cd "$GITHUB_WORKSPACE"
+            git config user.email "actions@github.com"
+            git config user.name "github-actions[bot]"
+            git add automation/apps-script/bridge_deployment_id.txt
+            git commit -m "Enregistrer l'ID du déploiement du pont web watchdog"
+            git push origin HEAD:${{ github.ref_name }}
+          else
+            echo "::notice::URL du pont web (inchangée): https://script.google.com/macros/s/$BRIDGE_ID/exec"
+          fi
         shell: bash

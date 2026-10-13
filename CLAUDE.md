@@ -19,9 +19,16 @@ hors plage.
   fichiers distincts côté Google).
 - `automation/apps-script/appsscript.json` — manifeste (scopes, web app).
 - `automation/apps-script/.clasp.json` — contient le `scriptId` réel.
-- `automation/apps-script/ACTION.txt` — un mot : `dry` / `deploy` / `publish`.
+- `automation/apps-script/ACTION.txt` — un mot : `dry` / `deploy` / `publish` /
+  `bridge`.
 - `automation/apps-script/deployment_id.txt` — ID du déploiement web app
-  existant (nécessaire uniquement pour `publish`).
+  **existant, historique** (celui trouvé le 13/10/2026 via `clasp
+  deployments`, avant toute action de cette session). Utilisé uniquement
+  par `publish` — ne jamais le confondre avec `bridge_deployment_id.txt`.
+- `automation/apps-script/bridge_deployment_id.txt` — ID du déploiement web
+  app **dédié au pont watchdog** (créé par l'action `bridge`, séparé du
+  déploiement existant pour ne jamais risquer de casser autre chose).
+  Vide tant que `bridge` n'a pas encore tourné une première fois.
 
 ## Comment déployer (toi, Claude, à partir de maintenant)
 
@@ -33,8 +40,15 @@ hors plage.
      toujours en premier après toute modification du manifeste.
    - `deploy` = pousse le code + crée une nouvelle version Apps Script. Le
      web app en ligne ne change PAS encore (pas de risque sur ce qui tourne).
-   - `publish` = pousse le code + crée une version + branche le web app sur
-     cette version (même URL, toujours — nécessite `deployment_id.txt`).
+   - `publish` = pousse le code + crée une version + branche le web app
+     EXISTANT (`deployment_id.txt`) sur cette version (même URL, toujours).
+     Risqué si on ne sait pas à quoi sert ce déploiement existant — à éviter
+     sauf demande explicite d'Etienne.
+   - `bridge` = pousse le code + crée une version + crée (1ère fois) ou met à
+     jour (`bridge_deployment_id.txt`) un déploiement web app **séparé,
+     dédié au pont watchdog** — ne touche jamais au déploiement existant.
+     C'est l'action à utiliser pour activer/mettre à jour le pont
+     doGet/doPost du watchdog.
 3. Committer et pousser sur `main`. Le workflow
    `.github/workflows/deploy.yml` se déclenche automatiquement.
 4. Lire le résultat dans l'onglet GitHub "Actions" du dépôt (`gh run list`,
