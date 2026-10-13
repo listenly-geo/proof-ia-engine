@@ -4805,15 +4805,18 @@ function processFollowUpsOpp_(context) {
 //     encore vue par l'IA (colonne "Statut réponse IA" vide), lit le
 //     dernier message du prospect dans le fil Gmail, appelle Claude
 //     (modèle REPLY_AGENT_MODEL, ex. Haiku) avec le prompt complet
-//     (réglage REPLY_AGENT_PROMPT, catégories A-J + lien WhatsApp
-//     d'Etienne en catégorie G), qui renvoie classification + brouillon
+//     (réglage REPLY_AGENT_PROMPT, catégories A-J ; catégorie G =
+//     partenariat commercial, reste toujours dans le mail, ne redirige
+//     plus vers WhatsApp), qui renvoie classification + brouillon
 //     + confiance + "révision humaine requise".
-//       - Cas sûr (pas de clause sensible, confiance >= 0.75) :
-//         "Statut réponse IA" = "Programmée", heure d'envoi = maintenant
-//         + délai naturel aléatoire proposé par l'IA (ou réglage par défaut).
-//       - Cas sensible (contrat/exclusivité/royalties précises/NDA/etc.
-//         ou confiance < 0.75) : "Statut réponse IA" = "À valider
-//         manuellement", brouillon écrit dans le Sheet, AUCUN envoi auto.
+//       - Cas sûr (pas de clause sensible, confiance >= 0.75, PAS
+//         catégorie G) : "Statut réponse IA" = "Programmée", heure
+//         d'envoi = maintenant + délai naturel aléatoire proposé par
+//         l'IA (ou réglage par défaut).
+//       - Cas sensible (contrat/exclusivité/royalties précises/NDA/etc.,
+//         confiance < 0.75, OU catégorie G) : "Statut réponse IA" = "À
+//         valider manuellement", brouillon écrit dans le Sheet, fil Gmail
+//         marqué Important + Suivi si catégorie G, AUCUN envoi auto.
 //  2. processScheduledReplies_ : envoie (dans le MÊME fil Gmail, comme
 //     une vraie relance) les réponses "Programmée" dont l'heure est passée.
 
@@ -4862,9 +4865,10 @@ function getLastExternalReply_(thread) {
 }
 
 // Appelle Claude (Haiku par défaut) avec le prompt système complet du
-// réglage REPLY_AGENT_PROMPT (catégories A-J, lien WhatsApp d'Etienne
-// en catégorie G) + le dernier message du prospect. Renvoie l'objet
-// JSON décrit dans "OUTPUT FORMAT FOR AUTOMATION" de ce prompt.
+// réglage REPLY_AGENT_PROMPT (catégories A-J ; catégorie G = partenariat
+// commercial, reste dans le mail, plus de lien WhatsApp) + le dernier
+// message du prospect. Renvoie l'objet JSON décrit dans "OUTPUT FORMAT
+// FOR AUTOMATION" de ce prompt.
 function askReplyAgent_(apiKey, payload) {
   const system = getReplyAgentPrompt_() +
     '\n\n==================================================\n' +
@@ -4983,6 +4987,25 @@ function processReplyAgentQueue_(context) {
         }
       : {};
 
+    // Catégorie G (partenariat commercial / licensing / royalties) :
+    // on ne laisse JAMAIS l'IA gérer ça seule. Le fil Gmail est marqué
+    // Important + Suivi (étoile) pour qu'Etienne le voie immédiatement,
+    // et needsHuman (plus bas) force systématiquement le passage en
+    // validation manuelle, quels que soient AUTO_SEND / la confiance.
+    const classification = String(result.classification || '').trim().toUpperCase();
+    const isCommercialPartnership =
+      classification === 'G' || classification.indexOf('COMMERCIAL_PARTNERSHIP') !== -1;
+
+    if (isCommercialPartnership) {
+      try {
+        thread.markImportant();
+        thread.star();
+      } catch (flagError) {
+        logJournal_('ReplyAgent', 'Erreur marquage Important/Suivi', String(row['Nom du SaaS'] || '') +
+          ' : ' + safeError_(flagError));
+      }
+    }
+
     if (!body) {
       writeFields_(context, sheetRow, Object.assign({
         'Classification réponse IA': String(result.classification || ''),
@@ -4997,7 +5020,8 @@ function processReplyAgentQueue_(context) {
     // quelle que soit la confiance de l'IA. Seul un passage explicite de
     // REPLY_AGENT_AUTO_SEND à TRUE dans Réglages réactive l'envoi auto pour
     // les réponses à confiance élevée.
-    const needsHuman = !getBoolSetting_('REPLY_AGENT_AUTO_SEND') ||
+    const needsHuman = isCommercialPartnership ||
+      !getBoolSetting_('REPLY_AGENT_AUTO_SEND') ||
       !!result.human_review_required ||
       !isFinite(Number(result.confidence)) ||
       Number(result.confidence) < 0.75;
