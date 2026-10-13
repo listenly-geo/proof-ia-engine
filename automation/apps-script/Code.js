@@ -5027,6 +5027,20 @@ function processReplyAgentQueue_(context) {
       Number(result.confidence) < 0.75;
 
     if (needsHuman) {
+      // Catégorie G : en plus du brouillon écrit dans le Sheet, on crée un
+      // VRAI brouillon Gmail dans le fil (visible directement dans Gmail,
+      // sous le message du prospect, fil déjà marqué Important + Suivi).
+      // Etienne n'a qu'à ouvrir Gmail, relire/ajuster et cliquer Envoyer —
+      // aucun envoi n'est fait automatiquement.
+      if (isCommercialPartnership) {
+        try {
+          thread.createDraftReplyAll(body, initialMailOptions_(body));
+        } catch (draftError) {
+          logJournal_('ReplyAgent', 'Erreur création brouillon Gmail réel', String(row['Nom du SaaS'] || '') +
+            ' : ' + safeError_(draftError));
+        }
+      }
+
       writeFields_(context, sheetRow, Object.assign({
         'Classification réponse IA': String(result.classification || ''),
         'Brouillon réponse IA': body,
