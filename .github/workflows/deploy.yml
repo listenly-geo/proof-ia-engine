@@ -48,10 +48,15 @@ jobs:
 
       - name: État actuel (toujours)
         run: |
+          set -e
           echo "--- clasp status ---"
-          clasp status || true
+          clasp status 2>&1 | tee /tmp/status.txt
           echo "--- clasp deployments ---"
-          clasp deployments || true
+          clasp deployments 2>&1 | tee -a /tmp/status.txt
+          echo "--- résumé (visible via l'API Checks, sans passer par les logs bruts) ---"
+          while IFS= read -r line; do
+            printf '::notice::%s\n' "$line"
+          done < /tmp/status.txt
 
       - name: Push du code
         if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
