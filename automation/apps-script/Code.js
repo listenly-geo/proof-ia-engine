@@ -5269,33 +5269,11 @@ function testReplyAgent() {
   const needsHuman = !!result.human_review_required ||
     !isFinite(confidence) || confidence < 0.75;
 
-  ui.alert(
-    'Résultat du test — RIEN n’est envoyé, RIEN n’est écrit dans le Sheet',
-    'Catégorie : ' + String(result.classification || '?') + '\n' +
-    'Confiance : ' + (isFinite(confidence) ? confidence : '?') + '\n' +
-    'Validation humaine requise : ' + (needsHuman ? 'OUI — resterait en brouillon' : 'non — partirait automatiquement') + '\n' +
-    'Délai recommandé avant envoi : ' + String(result.recommended_delay_minutes || '?') + ' min\n\n' +
-    '--- Brouillon de réponse généré ---\n\n' +
-    String(result.reply_body || '(vide)'),
-    ui.ButtonSet.OK
-  );
-
-  const sendAnswer = ui.prompt(
-    'Envoyer ce brouillon comme vrai e-mail de test ?',
-    'Colle une adresse e-mail pour recevoir ce test en conditions réelles ' +
-    '(reçu depuis ' + CONFIG.SENDER_ALIAS + '), ou laisse vide pour ne rien envoyer :',
-    ui.ButtonSet.OK_CANCEL
-  );
-
-  if (sendAnswer.getSelectedButton() !== ui.Button.OK) return;
-
-  const testRecipient = String(sendAnswer.getResponseText() || '').trim();
-  if (!testRecipient) return;
-
-  if (!isValidEmail_(testRecipient)) {
-    ui.alert('Adresse invalide, aucun e-mail envoyé.');
-    return;
-  }
+  // Un seul clic OK = envoi immédiat d'un vrai e-mail de test, à
+  // l'adresse du compte actuellement connecté (celui qui exécute ce
+  // menu) — pas de 2e fenêtre, pas d'adresse à saisir.
+  const testRecipient = Session.getEffectiveUser().getEmail();
+  let sendStatus = '';
 
   try {
     assertSenderAlias_();
@@ -5314,10 +5292,22 @@ function testReplyAgent() {
       options
     );
 
-    ui.alert('E-mail de test envoyé à ' + testRecipient + ' depuis ' + CONFIG.SENDER_ALIAS + '.');
+    sendStatus = '✅ E-mail de test envoyé à ' + testRecipient + ' depuis ' + CONFIG.SENDER_ALIAS + '.';
   } catch (error) {
-    ui.alert('Erreur à l’envoi du test : ' + safeError_(error));
+    sendStatus = '❌ Erreur à l’envoi du test : ' + safeError_(error);
   }
+
+  ui.alert(
+    'Résultat du test',
+    sendStatus + '\n\n' +
+    'Catégorie : ' + String(result.classification || '?') + '\n' +
+    'Confiance : ' + (isFinite(confidence) ? confidence : '?') + '\n' +
+    'Validation humaine requise : ' + (needsHuman ? 'OUI — resterait en brouillon' : 'non — partirait automatiquement') + '\n' +
+    'Délai recommandé avant envoi : ' + String(result.recommended_delay_minutes || '?') + ' min\n\n' +
+    '--- Brouillon de réponse envoyé ---\n\n' +
+    String(result.reply_body || '(vide)'),
+    ui.ButtonSet.OK
+  );
 }
 
 // =================================================================
