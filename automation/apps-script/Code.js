@@ -3635,7 +3635,11 @@ function writeFields_(context, row, fields) {
         'Relance 2 envoyée',
         'ID conversation',
         'Erreur envoi',
-        'Statut prospection'
+        'Statut prospection',
+        'Dernier message IA (ID)',
+        'Classification réponse IA',
+        'Brouillon réponse IA',
+        'Statut réponse IA'
       ].indexOf(header) !== -1
     ) {
       cell.clearDataValidations();
@@ -4999,7 +5003,13 @@ function processReplyAgentQueue_(context) {
     if (isCommercialPartnership) {
       try {
         thread.markImportant();
-        thread.star();
+        // GmailThread n'a pas de star() : seul un MESSAGE peut être étoilé.
+        // On étoile le dernier message du fil (celui du prospect), ce qui
+        // suffit pour que Gmail affiche l'étoile sur le fil dans la liste.
+        const lastMessage = reply && reply.id ? thread.getMessages().slice(-1)[0] : null;
+        if (lastMessage) {
+          lastMessage.star();
+        }
       } catch (flagError) {
         logJournal_('ReplyAgent', 'Erreur marquage Important/Suivi', String(row['Nom du SaaS'] || '') +
           ' : ' + safeError_(flagError));
