@@ -7,9 +7,12 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'dry (lecture seule) / deploy (push + nouvelle version) / publish (push + version + branche le web app)'
+        description: 'dry (lecture seule) / pull (rapatrie le vrai code+manifeste depuis Google, commit dans le dépôt) / deploy (push + nouvelle version) / publish (push + version + branche le web app)'
         required: true
         default: 'dry'
+
+permissions:
+  contents: write
 
 jobs:
   run:
@@ -57,6 +60,28 @@ jobs:
           while IFS= read -r line; do
             printf '::notice::%s\n' "$line"
           done < /tmp/status.txt
+
+      - name: Rapatrier le vrai code/manifeste (sécurité avant 1er déploiement)
+        if: steps.act.outputs.action == 'pull'
+        run: |
+          clasp pull
+          echo "--- diff par rapport à ce qui était dans le dépôt ---"
+          git -C "$GITHUB_WORKSPACE" diff --stat automation/apps-script || true
+
+      - name: Committer le code réel rapatrié
+        if: steps.act.outputs.action == 'pull'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git add automation/apps-script
+          if git diff --cached --quiet; then
+            echo "::notice::Rien de différent — le dépôt était déjà identique au script réel."
+          else
+            git commit -m "Sync: code/manifeste réels rapatriés depuis Apps Script (clasp pull)"
+            git push origin HEAD:${{ github.ref_name }}
+            echo "::notice::Code réel rapatrié et commité — relire automation/apps-script/appsscript.json avant tout deploy/publish."
+          fi
 
       - name: Push du code
         if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
