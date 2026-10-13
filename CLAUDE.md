@@ -13,7 +13,10 @@ hors plage.
 
 ## Où est le code
 
-- `automation/apps-script/Code.gs` — code source complet.
+- `automation/apps-script/Code.js` — code source complet (nom `Code.js` car
+  c'est le nom que `clasp pull` a donné au fichier réel récupéré depuis
+  Google ; NE PAS recréer de `Code.gs` séparé, sinon clasp pousserait deux
+  fichiers distincts côté Google).
 - `automation/apps-script/appsscript.json` — manifeste (scopes, web app).
 - `automation/apps-script/.clasp.json` — contient le `scriptId` réel.
 - `automation/apps-script/ACTION.txt` — un mot : `dry` / `deploy` / `publish`.
@@ -22,7 +25,7 @@ hors plage.
 
 ## Comment déployer (toi, Claude, à partir de maintenant)
 
-1. Modifier `automation/apps-script/Code.gs` (ou `appsscript.json`) selon
+1. Modifier `automation/apps-script/Code.js` (ou `appsscript.json`) selon
    la demande d'Etienne.
 2. Écrire le mot voulu dans `automation/apps-script/ACTION.txt` :
    - `dry` = ne pousse rien, affiche juste l'état actuel du script en ligne
@@ -44,22 +47,21 @@ main — tout passe par ce dépôt.
 
 ## RÈGLE DE SÉCURITÉ IMPORTANTE — avant le tout premier vrai déploiement
 
-`automation/apps-script/appsscript.json` dans ce dépôt a été écrit par
-Claude par déduction (scopes probables), PAS récupéré du script réel.
-Si on pousse ce fichier tel quel et qu'il diffère du manifeste réellement
-en ligne, Google peut exiger une **ré-autorisation complète** du script —
-ce qui recrée exactement le bug "mauvais compte propriétaire des
-déclencheurs" déjà rencontré le 13/10/2026.
+**FAIT le 13/10/2026** : l'action `pull` a tourné avec succès (run GitHub
+Actions, `clasp pull` authentifié sous `partnership.voiceover@corentin-cugnet.fr`),
+a rapatrié le VRAI `appsscript.json` (pas de bloc `webapp`, pas de
+`oauthScopes` explicites — différent du manifeste deviné au départ) et le
+VRAI code en ligne (`Code.js`, confirmé par diff identique au `CODE_VERSION`
+qu'on avait déjà, hors nos ajouts watchdog). Les deux ont été fusionnés en
+un seul fichier `Code.js` propre (plus de doublon `Code.gs`/`Code.js`).
 
-**Donc, avant la toute première action `deploy` ou `publish` :**
-1. Etienne (ou Claude via le poste relié) doit faire un `clasp pull` (ou
-   `clasp clone <scriptId>`) authentifié avec
-   `partnership.voiceover@corentin-cugnet.fr`, pour récupérer le VRAI
-   `appsscript.json` et le VRAI code actuellement en ligne.
-2. Remplacer les fichiers de ce dépôt par ce résultat réel (pas l'inverse).
-3. Seulement après ça, les futurs `deploy`/`publish` automatiques sont sûrs.
-
-Tant que cette étape n'a pas été faite, n'utiliser que `dry`.
+**Donc à partir de maintenant** : les futurs `deploy`/`publish` sont sûrs
+pour le CODE. Reste un point à trancher avant d'activer le pont web
+(doGet/doPost) : `appsscript.json` réel n'a pas de bloc `webapp`, donc il
+faudra l'ajouter explicitement (et seulement ça, sans toucher aux scopes)
+avant le premier `publish`, et s'attendre à ce que Google demande une
+ré-autorisation la première fois qu'un bloc `webapp` est ajouté — à faire
+consciemment, pas par surprise.
 
 ## Règles de sécurité à ne jamais casser
 
@@ -72,7 +74,7 @@ Tant que cette étape n'a pas été faite, n'utiliser que `dry`.
   (`partnership.voiceover@corentin-cugnet.fr`) — ne jamais recréer un
   déclencheur depuis un autre compte.
 
-## Watchdog (déjà dans Code.gs depuis le 13/10/2026)
+## Watchdog (déjà dans Code.js depuis le 13/10/2026)
 
 - `activerControleTotal()` (menu Prospection) : installe tous les
   déclencheurs (moteur SaaS, Opportunités, réponse IA, watchdog horaire) et

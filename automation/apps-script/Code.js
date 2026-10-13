@@ -356,6 +356,8 @@ function onOpen() {
     .addSeparator()
     .addItem('Désactiver la machine', 'disableProspectionMachine')
     .addSeparator()
+    .addItem('🛡️ Activer le CONTRÔLE TOTAL (watchdog + tous moteurs)', 'activerControleTotal')
+    .addSeparator()
     .addItem('— Opportunités (moteur indépendant) —', 'noopOppMenuLabel_')
     .addItem('🧭 Activer le moteur Opportunités', 'setupOpportunitesMachine')
     .addItem(
@@ -5277,6 +5279,336 @@ function testReplyAgent() {
     String(result.reply_body || '(vide)'),
     ui.ButtonSet.OK
   );
+}
+
+// =================================================================
+// WATCHDOG — CONTRÔLE TOTAL (ajouté 13/10/2026)
+//  - Vérifie chaque heure que tous les déclencheurs existent, les
+//    recrée seul s'il en manque.
+//  - Vérifie que la cadence d'envoi du jour est cohérente avec
+//    l'heure et la limite journalière ; relance un passage si retard.
+//  - Journalise tout dans un onglet masqué "Journal script".
+//  - Expose un état en lecture (et un déclenchement manuel protégé
+//    par secret) via doGet/doPost, pour un suivi externe (GitHub
+//    Actions) qui ne dépend pas d'Apps Script.
+// =================================================================
+
+const WATCHDOG_HANDLER = 'watchdogRun';
+const JOURNAL_SHEET_NAME = 'Journal script';
+const WEBAPP_SECRET_PROPERTY = 'WEBAPP_SECRET';
+
+function activerControleTotal() {
+  assertSenderAlias_();
+  setupSettingsSheet();
+  assertRequiredHeaders_();
+
+  installTriggers_();
+  installTriggersOpp_();
+  installReplyAgentTriggers_();
+  installWatchdogTrigger_();
+
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty(WEBAPP_SECRET_PROPERTY);
+
+  if (!secret) {
+    secret = Utilities.getUuid();
+    props.setProperty(WEBAPP_SECRET_PROPERTY, secret);
+  }
+
+  getJournalSheet_();
+
+  notify_(
+    'Contrôle total activé : moteur SaaS, Opportunités, réponse IA et ' +
+    'watchdog horaire sont tous installés et surveillés.\n\n' +
+    'Secret du pont web (à garder, ne jamais coller ailleurs que dans un ' +
+    'secret GitHub) : ' + secret
+  );
+}
+
+function installWatchdogTrigger_() {
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === WATCHDOG_HANDLER) {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  ScriptApp.newTrigger(WATCHDOG_HANDLER)
+    .timeBased()
+    .everyHours(1)
+    .create();
+}
+
+function getJournalSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(JOURNAL_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(JOURNAL_SHEET_NAME);
+    sheet.getRange(1, 1, 1, 4).setValues([
+      ['Date', 'Étape', 'Résultat', 'Détail']
+    ]);
+
+    try {
+      sheet.hideSheet();
+    } catch (error) {
+      // pas grave si ça échoue (ex. dernier onglet visible) ; on continue
+    }
+  }
+
+  return sheet;
+}
+
+function logJournal_(step, result, detail) {
+  try {
+    const sheet = getJournalSheet_();
+
+    sheet.appendRow([
+      Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm:ss'),
+      step,
+      result,
+      detail || ''
+    ]);
+
+    const maxRows = 2000;
+    const lastRow = sheet.getLastRow();
+
+    if (lastRow > maxRows + 1) {
+      sheet.deleteRows(2, lastRow - maxRows - 1);
+    }
+  } catch (error) {
+    // le journal ne doit jamais faire planter le watchdog lui-même
+    console.log('Journal indisponible : ' + safeError_(error));
+  }
+}
+
+function watchdogRun() {
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(10000)) return;
+
+  try {
+    watchdogBody_();
+  } catch (error) {
+    logJournal_('watchdog', '⚠️ ERREUR', safeError_(error));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function watchdogBody_() {
+  checkTriggers_();
+  checkCadence_();
+}
+
+function checkTriggers_() {
+  const present = {};
+
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    present[trigger.getHandlerFunction()] = true;
+  });
+
+  const expected = MACHINE_HANDLERS
+    .concat(OPP_MACHINE_HANDLERS)
+    .concat(REPLY_AGENT_HANDLERS)
+    .concat([WATCHDOG_HANDLER]);
+
+  const missing = expected.filter(function (handler) {
+    return !present[handler];
+  });
+
+  if (!missing.length) {
+    logJournal_('déclencheurs', '✅ OK', expected.length + ' présents');
+    return;
+  }
+
+  if (
+    missing.indexOf('processProspectionMachine') !== -1 ||
+    missing.indexOf('discoverProspectsDaily') !== -1 ||
+    missing.indexOf('sendDailyReport') !== -1
+  ) {
+    installTriggers_();
+  }
+
+  if (missing.indexOf('processOpportunitesMachine') !== -1) {
+    installTriggersOpp_();
+  }
+
+  if (missing.indexOf('processReplyAgentMachine') !== -1) {
+    installReplyAgentTriggers_();
+  }
+
+  if (missing.indexOf(WATCHDOG_HANDLER) !== -1) {
+    installWatchdogTrigger_();
+  }
+
+  logJournal_('déclencheurs', '⚠️ recréés', missing.join(', '));
+}
+
+function checkCadence_() {
+  try {
+    const tz = CONFIG.TIME_ZONE;
+    const now = new Date();
+    const weekdaysOnly = getBoolSetting_('WEEKDAYS_ONLY');
+    const startHour = getNumberSetting_('SEND_START_HOUR', 8);
+    const endHour = getNumberSetting_('SEND_END_HOUR', 19);
+    const dailyLimit = getNumberSetting_('DAILY_LIMIT', CONFIG.DAILY_LIMIT);
+
+    const dow = Number(Utilities.formatDate(now, tz, 'u'));
+    const hour = Number(Utilities.formatDate(now, tz, 'H'));
+    const inWindow = (!weekdaysOnly || dow <= 5) &&
+      hour >= startHour && hour < endHour;
+
+    if (!inWindow) {
+      logJournal_('cadence', 'ℹ️ hors plage', 'jour/heure hors fenêtre d’envoi');
+      return;
+    }
+
+    const todayKey = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+    const context = getContext_();
+
+    const sentToday = context.rows.filter(function (row) {
+      const sentAt = toDate_(row['Date envoi']);
+      return sentAt &&
+        Utilities.formatDate(sentAt, tz, 'yyyy-MM-dd') === todayKey;
+    }).length;
+
+    const elapsed = Math.max(0, hour - startHour);
+    const span = Math.max(1, endHour - startHour);
+    const expectedByNow = Math.floor(dailyLimit * elapsed / span);
+
+    if (sentToday + 5 < expectedByNow) {
+      logJournal_(
+        'cadence', '⚠️ retard',
+        'envoyés=' + sentToday + ' attendu≈' + expectedByNow
+      );
+
+      try {
+        runMachine_(true);
+        logJournal_('rattrapage', '✅ relancé', 'passage forcé exécuté');
+      } catch (errorRun) {
+        logJournal_('rattrapage', '⚠️ ERREUR', safeError_(errorRun));
+      }
+    } else {
+      logJournal_(
+        'cadence', '✅ OK',
+        'envoyés=' + sentToday + ' attendu≈' + expectedByNow
+      );
+    }
+  } catch (error) {
+    logJournal_('cadence', '⚠️ ERREUR', safeError_(error));
+  }
+}
+
+// ---------------------------------------------------------------
+// PONT WEB (doGet/doPost) — état et commandes protégés par secret
+// ---------------------------------------------------------------
+
+function checkWebappSecret_(e) {
+  const expected = PropertiesService
+    .getScriptProperties()
+    .getProperty(WEBAPP_SECRET_PROPERTY);
+
+  const given = e && e.parameter && e.parameter.secret;
+
+  return !!expected && given === expected;
+}
+
+function jsonResponse_(object) {
+  return ContentService
+    .createTextOutput(JSON.stringify(object))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function buildStatusPayload_() {
+  const tz = CONFIG.TIME_ZONE;
+  const now = new Date();
+  const todayKey = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+
+  let sentToday = null;
+  try {
+    const context = getContext_();
+    sentToday = context.rows.filter(function (row) {
+      const sentAt = toDate_(row['Date envoi']);
+      return sentAt &&
+        Utilities.formatDate(sentAt, tz, 'yyyy-MM-dd') === todayKey;
+    }).length;
+  } catch (error) {
+    sentToday = null;
+  }
+
+  const triggers = ScriptApp.getProjectTriggers().map(function (trigger) {
+    return trigger.getHandlerFunction();
+  });
+
+  let journalTail = [];
+  try {
+    const sheet = getJournalSheet_();
+    const lastRow = sheet.getLastRow();
+    const from = Math.max(2, lastRow - 19);
+    if (lastRow >= 2) {
+      journalTail = sheet.getRange(from, 1, lastRow - from + 1, 4).getValues();
+    }
+  } catch (error) {
+    journalTail = [];
+  }
+
+  return {
+    now: now.toISOString(),
+    codeVersion: CONFIG.CODE_VERSION || null,
+    masterPause: getBoolSetting_('MASTER_PAUSE'),
+    autoSend: getBoolSetting_('AUTO_SEND'),
+    dailyLimit: getNumberSetting_('DAILY_LIMIT', CONFIG.DAILY_LIMIT),
+    sentToday: sentToday,
+    sendWindow: {
+      weekdaysOnly: getBoolSetting_('WEEKDAYS_ONLY'),
+      startHour: getNumberSetting_('SEND_START_HOUR', 8),
+      endHour: getNumberSetting_('SEND_END_HOUR', 19)
+    },
+    triggers: triggers,
+    journalTail: journalTail
+  };
+}
+
+function doGet(e) {
+  if (!checkWebappSecret_(e)) {
+    return jsonResponse_({ error: 'secret invalide ou manquant' });
+  }
+
+  const action = e.parameter.action || 'status';
+
+  if (action === 'status') {
+    return jsonResponse_(buildStatusPayload_());
+  }
+
+  return jsonResponse_({ error: 'action GET inconnue : ' + action });
+}
+
+function doPost(e) {
+  if (!checkWebappSecret_(e)) {
+    return jsonResponse_({ error: 'secret invalide ou manquant' });
+  }
+
+  const action = (e.parameter && e.parameter.action) || 'none';
+
+  if (action === 'processQueue') {
+    try {
+      runMachine_(true);
+      return jsonResponse_({ ok: true, status: buildStatusPayload_() });
+    } catch (error) {
+      return jsonResponse_({ ok: false, error: safeError_(error) });
+    }
+  }
+
+  if (action === 'watchdog') {
+    try {
+      watchdogBody_();
+      return jsonResponse_({ ok: true, status: buildStatusPayload_() });
+    } catch (error) {
+      return jsonResponse_({ ok: false, error: safeError_(error) });
+    }
+  }
+
+  return jsonResponse_({ error: 'action POST inconnue : ' + action });
 }
 
 // FIN DU SCRIPT COMPLET
