@@ -5611,4 +5611,15 @@ function doPost(e) {
   return jsonResponse_({ error: 'action POST inconnue : ' + action });
 }
 
+// Fonction neutre, sans aucun effet de bord, uniquement pour vérifier que
+// l'appel via l'API Apps Script (scripts.run, authentifié) fonctionne avant
+// d'exécuter de vraies fonctions métier.
+function pingTest() {
+  return {
+    ok: true,
+    date: Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm:ss'),
+    user: Session.getEffectiveUser().getEmail()
+  };
+}
+
 // FIN DU SCRIPT COMPLET

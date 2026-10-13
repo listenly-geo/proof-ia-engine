@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'dry / pull / deploy (push + nouvelle version) / publish (+ branche le web app EXISTANT) / bridge (+ crée ou met à jour un déploiement web app SÉPARÉ pour le pont watchdog, sans toucher au déploiement existant)'
+        description: 'dry / pull / deploy (push + nouvelle version) / publish (+ branche le web app EXISTANT) / bridge (+ crée ou met à jour un déploiement web app SÉPARÉ pour le pont watchdog) / test (exécute une fonction précise via l''API Apps Script, voir le champ function ci-dessous)'
         required: true
         default: 'dry'
+      function:
+        description: 'Uniquement pour action=test : nom exact de la fonction à exécuter (ex. processProspectionMachine, processOpportunitesMachine, processReplyAgentMachine)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -160,4 +164,20 @@ jobs:
           else
             echo "::notice::URL du pont web (inchangée): https://script.google.com/macros/s/$BRIDGE_ID/exec"
           fi
+        shell: bash
+
+      - name: Test — exécuter une fonction précise (API Apps Script, authentifié)
+        if: steps.act.outputs.action == 'test'
+        run: |
+          set +e
+          FN="${{ github.event.inputs.function }}"
+          if [ -z "$FN" ]; then
+            echo "::error::action=test nécessite le champ 'function' (ex. processProspectionMachine)."
+            exit 1
+          fi
+          echo "::notice::Exécution de $FN via l'API Apps Script (devMode, dernier code sauvegardé)..."
+          OUT=$(node run-function.mjs "$FN" 2>&1)
+          CODE=$?
+          echo "$OUT" | while IFS= read -r line; do printf '::notice::%s\n' "$line"; done
+          exit $CODE
         shell: bash
