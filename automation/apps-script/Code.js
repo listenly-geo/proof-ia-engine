@@ -5279,6 +5279,45 @@ function testReplyAgent() {
     String(result.reply_body || '(vide)'),
     ui.ButtonSet.OK
   );
+
+  const sendAnswer = ui.prompt(
+    'Envoyer ce brouillon comme vrai e-mail de test ?',
+    'Colle une adresse e-mail pour recevoir ce test en conditions réelles ' +
+    '(reçu depuis ' + CONFIG.SENDER_ALIAS + '), ou laisse vide pour ne rien envoyer :',
+    ui.ButtonSet.OK_CANCEL
+  );
+
+  if (sendAnswer.getSelectedButton() !== ui.Button.OK) return;
+
+  const testRecipient = String(sendAnswer.getResponseText() || '').trim();
+  if (!testRecipient) return;
+
+  if (!isValidEmail_(testRecipient)) {
+    ui.alert('Adresse invalide, aucun e-mail envoyé.');
+    return;
+  }
+
+  try {
+    assertSenderAlias_();
+    const options = mailOptions_();
+    options.htmlBody = asciiSafeHtml_(
+      '<div style="background:#ffffff;font-family:Arial,Helvetica,sans-serif;' +
+      'font-size:16px;line-height:1.5;color:#222;margin:0;">' +
+      formatBodyHtml_(String(result.reply_body || '(vide)')) +
+      '</div>'
+    );
+
+    GmailApp.sendEmail(
+      testRecipient,
+      '[TEST réponse IA] ' + String(result.classification || ''),
+      String(result.reply_body || '(vide)'),
+      options
+    );
+
+    ui.alert('E-mail de test envoyé à ' + testRecipient + ' depuis ' + CONFIG.SENDER_ALIAS + '.');
+  } catch (error) {
+    ui.alert('Erreur à l’envoi du test : ' + safeError_(error));
+  }
 }
 
 // =================================================================
