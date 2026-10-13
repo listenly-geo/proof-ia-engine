@@ -3779,6 +3779,11 @@ function formatBodyHtml_(body) {
   return paragraphs.map(function (paragraph) {
     let text = escapeHtml_(paragraph).replace(/\n/g, '<br>');
 
+    // Markdown **gras** (utilisé par l'IA de réponse automatique, entre
+    // autres) converti en vrai gras HTML — sinon les astérisques
+    // apparaissent tels quels dans le mail reçu.
+    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
     // Toute URL en clair devient un simple lien bleu (jamais un bouton).
     text = text.replace(/https?:\/\/[^\s<]+/g, function (url) {
       const prefix = (!emoji2Used && emoji2) ? emoji2 + ' ' : '';
@@ -5055,7 +5060,15 @@ function processScheduledReplies_(context) {
 
     try {
       const messages = thread.getMessages();
-      messages[messages.length - 1].replyAll(body, mailOptions_());
+      const options = mailOptions_();
+      options.htmlBody = asciiSafeHtml_(
+        '<div style="background:#ffffff;font-family:Arial,Helvetica,sans-serif;' +
+        'font-size:16px;line-height:1.5;color:#222;margin:0;">' +
+        formatBodyHtml_(body) +
+        '</div>'
+      );
+
+      messages[messages.length - 1].replyAll(body, options);
 
       writeFields_(context, sheetRow, {
         'Statut réponse IA': 'Envoyée',
