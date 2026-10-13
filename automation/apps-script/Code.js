@@ -3951,7 +3951,7 @@ function isAutoResponderMessage_(message) {
   const snippet = String(message.getPlainBody() || '').slice(0, 400).toLowerCase();
   const text = subject + ' ' + snippet;
 
-  return /out of office|automatic reply|auto-reply|auto reply|absence du bureau|r[ée]ponse automatique|en cong[ée]|away from (the office|my desk)|currently (away|out|unavailable)|we('| )ve received your (message|request|email)|your (ticket|request) (has been|was) (created|received|opened)|thank you for (contacting|reaching out to) us|this is an automated (message|response|reply)|ticket #?\d+ (has been|was) created|we will get back to you (shortly|soon|as soon as possible)/i.test(text);
+  return /out of office|automatic reply|auto-reply|auto reply|absence du bureau|r[ée]ponse automatique|en cong[ée]|away from (the office|my desk)|currently (away|out|unavailable)|we('| )ve received your (message|request|email)|your (ticket|request) (has been|was) (created|received|opened)|thank you for (contacting|reaching out to) us|this is an automated (message|response|reply)|ticket #?\d+ (has been|was) created|we will get back to you (shortly|soon|as soon as possible)|expected response time|this (message|email)? ?has been (sent|forwarded) to (our|the) (support|team)|(our|the) support team (will|has)|we (aim|try|typically respond|strive) to (respond|reply) within|response time (for|is) (email )?support|a (member of our|support) team will (get back|respond|reach out)/i.test(text);
 }
 
 function hasExternalReply_(thread) {
