@@ -103,11 +103,39 @@ consciemment, pas par surprise.
   dernières lignes du journal. `POST ?action=processQueue` force un
   passage d'envoi. `POST ?action=watchdog` force une vérification.
 
+## Pont web (`doGet`/`doPost`) — PARKED, non déployé (13/10/2026)
+
+Le code `doGet`/`doPost` existe dans `Code.js` mais n'est PAS exposé en
+ligne : la tentative de déploiement en accès public anonyme
+(`"access": "ANYONE_ANONYMOUS"`) a été refusée par Google avec l'erreur
+`Only users in the same domain as the script owner may deploy this
+script.` — c'est une restriction de l'espace de travail Google
+(`corentin-cugnet.fr`), pas un bug du code. Pour la débloquer il
+faudrait qu'un admin Workspace autorise les web apps accessibles de
+façon anonyme (console d'admin Google, pas quelque chose que Claude
+peut faire).
+
+**Ce n'est pas bloquant** : Claude peut déjà lire l'état du moteur
+directement via l'API Google Sheets (onglets `Historique`, `Réglages`,
+et le nouvel onglet masqué "Journal script") sans passer par un pont
+web. Donc le suivi/statut se fait par lecture directe du Sheet, pas par
+`doGet`.
+
+`appsscript.json` a été remis sans bloc `webapp` (le déploiement ayant
+échoué, rien n'était en ligne — retour à l'état stable). Si on veut
+réactiver le pont un jour : soit débloquer le réglage Workspace, soit
+construire le filet de secours autrement (voir ci-dessous).
+
 ## À construire ensuite (demandé par Etienne, pas encore fait)
 
-- Filet de secours GitHub Actions planifié toutes les heures, qui appelle
-  le pont web (`doGet ?action=status`) et relance (`doPost
-  ?action=processQueue`) si le déclencheur Apps Script est tombé — même
+- Filet de secours GitHub Actions planifié toutes les heures : plutôt
+  que de passer par un pont web public (bloqué, voir ci-dessus), lire
+  l'état directement via l'API Google Sheets (mêmes identifiants
+  `CLASPRC_JSON`/compte `partnership.voiceover@corentin-cugnet.fr`, ou
+  un token OAuth dérivé de ce même `.clasprc.json`) et, si besoin,
+  déclencher un passage via l'API Apps Script "Execution API"
+  (`scripts.run`, accès `MYSELF`, authentifié — pas de restriction de
+  domaine car pas d'accès anonyme) plutôt qu'un webapp public. Mêmes
   règles de sécurité, respecte `MASTER_PAUSE`.
 - Rapport du soir automatique : envoyés/objectif, relances, réponses,
   anomalies corrigées par le watchdog.
