@@ -85,23 +85,42 @@ jobs:
 
       - name: Push du code
         if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
-        run: clasp push --force
+        run: |
+          set +e
+          clasp push --force 2>&1 | tee /tmp/push.txt
+          CODE=${PIPESTATUS[0]}
+          while IFS= read -r line; do
+            printf '::notice::%s\n' "$line"
+          done < /tmp/push.txt
+          exit "$CODE"
+        shell: bash
 
       - name: Nouvelle version
         if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
         id: version
         run: |
-          OUT=$(clasp version "Auto-déploiement GitHub Actions $(date -u +%Y-%m-%dT%H:%M:%SZ)")
-          echo "$OUT"
+          set +e
+          OUT=$(clasp version "Auto-déploiement GitHub Actions $(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>&1)
+          CODE=$?
+          echo "$OUT" | while IFS= read -r line; do printf '::notice::%s\n' "$line"; done
+          if [ $CODE -ne 0 ]; then
+            exit $CODE
+          fi
           VNUM=$(echo "$OUT" | grep -oE '[0-9]+' | tail -1)
           echo "version=$VNUM" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Brancher le web app sur cette version (même URL)
         if: steps.act.outputs.action == 'publish'
         run: |
+          set +e
           DEPLOY_ID=$(cat deployment_id.txt 2>/dev/null || echo "")
           if [ -z "$DEPLOY_ID" ]; then
             echo "::error::Aucun deployment_id.txt — faire un premier 'clasp deploy' manuel une fois, puis enregistrer l'ID retourné dans automation/apps-script/deployment_id.txt"
             exit 1
           fi
-          clasp deploy --deploymentId "$DEPLOY_ID" --versionNumber "${{ steps.version.outputs.version }}" --description "Auto $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          OUT=$(clasp deploy --deploymentId "$DEPLOY_ID" --versionNumber "${{ steps.version.outputs.version }}" --description "Auto $(date -u +%Y-%m-%dT%H:%M:%SZ)" 2>&1)
+          CODE=$?
+          echo "$OUT" | while IFS= read -r line; do printf '::notice::%s\n' "$line"; done
+          exit $CODE
+        shell: bash
