@@ -1,0 +1,77 @@
+name: Déploiement MOTEUR PROOF IA (Apps Script)
+
+on:
+  push:
+    paths:
+      - 'automation/apps-script/**'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'dry (lecture seule) / deploy (push + nouvelle version) / publish (push + version + branche le web app)'
+        required: true
+        default: 'dry'
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: automation/apps-script
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp@3.0.4-alpha
+
+      - name: Restore clasp credentials
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+
+      - name: Determine action
+        id: act
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "action=${{ github.event.inputs.action }}" >> "$GITHUB_OUTPUT"
+          else
+            ACTION=$(tr -d '[:space:]' < ACTION.txt 2>/dev/null || echo "dry")
+            echo "action=${ACTION:-dry}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Action retenue: ${ACTION:-dry}"
+
+      - name: État actuel (toujours)
+        run: |
+          echo "--- clasp status ---"
+          clasp status || true
+          echo "--- clasp deployments ---"
+          clasp deployments || true
+
+      - name: Push du code
+        if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
+        run: clasp push --force
+
+      - name: Nouvelle version
+        if: steps.act.outputs.action == 'deploy' || steps.act.outputs.action == 'publish'
+        id: version
+        run: |
+          OUT=$(clasp version "Auto-déploiement GitHub Actions $(date -u +%Y-%m-%dT%H:%M:%SZ)")
+          echo "$OUT"
+          VNUM=$(echo "$OUT" | grep -oE '[0-9]+' | tail -1)
+          echo "version=$VNUM" >> "$GITHUB_OUTPUT"
+
+      - name: Brancher le web app sur cette version (même URL)
+        if: steps.act.outputs.action == 'publish'
+        run: |
+          DEPLOY_ID=$(cat deployment_id.txt 2>/dev/null || echo "")
+          if [ -z "$DEPLOY_ID" ]; then
+            echo "::error::Aucun deployment_id.txt — faire un premier 'clasp deploy' manuel une fois, puis enregistrer l'ID retourné dans automation/apps-script/deployment_id.txt"
+            exit 1
+          fi
+          clasp deploy --deploymentId "$DEPLOY_ID" --versionNumber "${{ steps.version.outputs.version }}" --description "Auto $(date -u +%Y-%m-%dT%H:%M:%SZ)"
