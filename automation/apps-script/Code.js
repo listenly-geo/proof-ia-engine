@@ -4860,7 +4860,8 @@ function getLastExternalReply_(thread) {
       return {
         id: message.getId(),
         name: String(message.getFrom() || '').replace(/<.*>/, '').trim() || from,
-        text: String(message.getPlainBody() || '').trim().slice(0, 6000)
+        text: String(message.getPlainBody() || '').trim().slice(0, 6000),
+        date: message.getDate()
       };
     }
   }
@@ -4947,6 +4948,13 @@ function processReplyAgentQueue_(context) {
   const apiKey = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!apiKey) return;
 
+  // Réponses reçues avant cette date : Etienne les a déjà traitées à la
+  // main avant l'activation de l'agent, donc on ne les touche jamais,
+  // ni maintenant ni plus tard. Seule la DATE DE LA RÉPONSE compte : un
+  // vieux fil qui reçoit une NOUVELLE réponse après ce seuil est bien
+  // traité normalement.
+  const ignoreBefore = toDate_(getSetting_('REPLY_AGENT_IGNORE_BEFORE'));
+
   for (let i = 0; i < context.rows.length; i++) {
     const row = context.rows[i];
 
@@ -4959,6 +4967,10 @@ function processReplyAgentQueue_(context) {
 
     const reply = getLastExternalReply_(thread);
     if (!reply || !reply.text) continue;
+
+    if (ignoreBefore && reply.date && reply.date.getTime() < ignoreBefore.getTime()) {
+      continue;
+    }
 
     // Déjà traité : le dernier message externe du fil est celui qu'on a
     // déjà classé lors d'un passage précédent.
