@@ -21,6 +21,7 @@ const CONFIG = Object.freeze({
   FIRST_DATA_ROW: 6,
   SENDER_ALIAS: 'partnership.voiceover@corentin-cugnet.fr',
   SENDER_NAME: 'Corentin Cugnet',
+  SENDER_DOMAIN: 'corentin-cugnet.fr',
   IMAGE_FILE_ID: '1nIpD4SHvursmVmFHxvRrwApkOF7sQKOz',
   SAMPLES_URL: 'https://corentinvoice.live/',
   DAILY_LIMIT: 10,
@@ -33,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-10-13-report-daily-planned-count'
+  CODE_VERSION: '2026-10-15-postmaster-reputation-score'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -3443,6 +3444,39 @@ function buildDailyReport_(context) {
   }
 
   lines.push('');
+  lines.push('Réputation d’envoi (Google Postmaster Tools)');
+
+  try {
+    const pmStats = fetchPostmasterTrafficStats_();
+    const pmScore = computePostmasterScore_(pmStats);
+
+    if (!pmScore) {
+      lines.push('- Pas encore de données disponibles (délai Postmaster ~1-2 jours, ou domaine ' +
+        'pas encore assez de volume).');
+    } else {
+      lines.push('- Score du ' + pmScore.date + ' : ' + pmScore.score + '/100 ' +
+        '(réputation domaine : ' + pmScore.domainReputation + ')');
+      lines.push('- Plaintes spam destinataires : ' +
+        (pmScore.spamRatioPct === null ? 'inconnu' : pmScore.spamRatioPct + ' %'));
+      lines.push('- Authentification SPF/DKIM/DMARC : ' +
+        (pmScore.authPct === null ? 'inconnu' : pmScore.authPct + ' %'));
+      lines.push('- Erreurs de livraison : ' + pmScore.deliveryErrorPct + ' %');
+
+      const adjustment = applyPostmasterAdjustment_(pmScore);
+
+      if (adjustment) {
+        lines.push('- Volume ajusté en conséquence : ' + Math.round(adjustment.ratio * 100) +
+          ' % du rythme normal → DAILY_LIMIT=' + adjustment.newLimit +
+          ', MAX_SENDS_PER_RUN=' + adjustment.newRun);
+      } else {
+        lines.push('- Ajustement automatique désactivé (POSTMASTER_AUTO_ADJUST = FALSE).');
+      }
+    }
+  } catch (error) {
+    lines.push('- ⚠ Impossible de lire Postmaster Tools : ' + safeError_(error));
+  }
+
+  lines.push('');
   lines.push('Diagnostic — rafale d’envoi');
 
   const burstCheck = detectSendBurst_(rows, since);
@@ -4078,6 +4112,129 @@ function verifyEmailAddress_(email) {
     console.log('Vérification email (' + email + ') : erreur — ' + safeError_(error));
     return { checked: false, safe: true, raw: safeError_(error) };
   }
+}
+
+// ---------------------------------------------------------------
+// GOOGLE POSTMASTER TOOLS — score de réputation d'envoi réel (pas une
+// estimation locale : ce que Gmail voit vraiment chez les destinataires).
+// Nécessite que le domaine CONFIG.SENDER_DOMAIN soit vérifié sur
+// https://postmaster.google.com par le même compte qui possède ce script
+// (fait le 15/10/2026). Les données Postmaster ont ~1-2 jours de retard :
+// on essaie hier, puis avant-hier si absent.
+// ---------------------------------------------------------------
+
+function fetchPostmasterTrafficStats_() {
+  const token = ScriptApp.getOAuthToken();
+  const base = 'https://gmailpostmastertools.googleapis.com/v1beta1/domains/' +
+    encodeURIComponent(CONFIG.SENDER_DOMAIN) + '/trafficStats/';
+
+  for (let daysAgo = 1; daysAgo <= 3; daysAgo++) {
+    const day = new Date(Date.now() - daysAgo * 86400000);
+    const dateStr = Utilities.formatDate(day, CONFIG.TIME_ZONE, 'yyyyMMdd');
+
+    const response = UrlFetchApp.fetch(base + dateStr, {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+
+    const code = response.getResponseCode();
+
+    if (code === 200) {
+      const data = JSON.parse(response.getContentText());
+      data._dateUsed = Utilities.formatDate(day, CONFIG.TIME_ZONE, 'yyyy-MM-dd');
+      return data;
+    }
+
+    if (code !== 404) {
+      console.log('Postmaster Tools (' + dateStr + ') : HTTP ' + code + ' — ' +
+        response.getContentText().slice(0, 300));
+    }
+  }
+
+  return null;
+}
+
+// Convertit les données brutes Postmaster Tools en un score 0-100 et un
+// résumé lisible. Pondération volontairement simple et transparente :
+// réputation domaine (40%), plaintes spam des destinataires (30%),
+// authentification SPF/DKIM/DMARC (20%), erreurs de livraison (10%).
+function computePostmasterScore_(stats) {
+  if (!stats) return null;
+
+  const reputationMap = { HIGH: 100, MEDIUM: 70, LOW: 35, BAD: 5 };
+  const domainScore = reputationMap[stats.domainReputation] !== undefined ?
+    reputationMap[stats.domainReputation] : null;
+
+  // userReportedSpamRatio : au-delà de 0.3% (0.003), Google considère déjà
+  // ça comme un signal négatif sérieux pour la réputation d'envoi.
+  const spamRatio = typeof stats.userReportedSpamRatio === 'number' ? stats.userReportedSpamRatio : null;
+  const spamScore = spamRatio === null ? null : Math.max(0, 100 - (spamRatio / 0.003) * 100);
+
+  const authRatios = [stats.spfSuccessRatio, stats.dkimSuccessRatio, stats.dmarcSuccessRatio]
+    .filter(function (v) { return typeof v === 'number'; });
+  const authScore = authRatios.length ?
+    (authRatios.reduce(function (a, b) { return a + b; }, 0) / authRatios.length) * 100 : null;
+
+  const deliveryErrorRatio = (stats.deliveryErrors || [])
+    .reduce(function (sum, e) { return sum + (Number(e.errorRatio) || 0); }, 0);
+  const deliveryScore = Math.max(0, 100 - deliveryErrorRatio * 100 * 5);
+
+  const parts = [
+    { value: domainScore, weight: 0.4 },
+    { value: spamScore, weight: 0.3 },
+    { value: authScore, weight: 0.2 },
+    { value: deliveryScore, weight: 0.1 }
+  ].filter(function (p) { return p.value !== null; });
+
+  if (!parts.length) return null;
+
+  const totalWeight = parts.reduce(function (sum, p) { return sum + p.weight; }, 0);
+  const score = parts.reduce(function (sum, p) { return sum + p.value * p.weight; }, 0) / totalWeight;
+
+  return {
+    score: Math.round(score),
+    date: stats._dateUsed,
+    domainReputation: stats.domainReputation || 'inconnue',
+    spamRatioPct: spamRatio === null ? null : Math.round(spamRatio * 10000) / 100,
+    authPct: authScore === null ? null : Math.round(authScore),
+    deliveryErrorPct: Math.round(deliveryErrorRatio * 10000) / 100
+  };
+}
+
+// Calculé une fois par jour (depuis le rapport quotidien) : ajuste
+// DAILY_LIMIT / MAX_SENDS_PER_RUN à la hausse ou à la baisse selon le score
+// de réputation réel, par rapport aux valeurs "normales" de référence
+// (DAILY_LIMIT_BASE / MAX_SENDS_PER_RUN_BASE, jamais modifiées
+// automatiquement — c'est le plafond vers lequel on remonte si tout va bien).
+function applyPostmasterAdjustment_(scoreInfo) {
+  if (!getBoolSetting_('POSTMASTER_AUTO_ADJUST')) return null;
+  if (!scoreInfo) return null;
+
+  const base = getNumberSetting_('DAILY_LIMIT_BASE', getNumberSetting_('DAILY_LIMIT', 50));
+  const baseRun = getNumberSetting_('MAX_SENDS_PER_RUN_BASE', getNumberSetting_('MAX_SENDS_PER_RUN', 5));
+
+  let ratio;
+  if (scoreInfo.score >= 80) ratio = 1;
+  else if (scoreInfo.score >= 50) ratio = 0.5;
+  else ratio = 0.25;
+
+  const newLimit = Math.max(1, Math.round(base * ratio));
+  const newRun = Math.max(1, Math.round(baseRun * ratio));
+
+  const changed = newLimit !== getNumberSetting_('DAILY_LIMIT', base) ||
+    newRun !== getNumberSetting_('MAX_SENDS_PER_RUN', baseRun);
+
+  setSetting_('DAILY_LIMIT', String(newLimit));
+  setSetting_('MAX_SENDS_PER_RUN', String(newRun));
+
+  if (changed) {
+    logJournal_('Postmaster', 'Volume ajusté',
+      'Score ' + scoreInfo.score + '/100 → DAILY_LIMIT=' + newLimit + ', MAX_SENDS_PER_RUN=' + newRun +
+      ' (base ' + base + '/' + baseRun + ')');
+  }
+
+  return { ratio: ratio, newLimit: newLimit, newRun: newRun };
 }
 
 function extractEmail_(value) {
