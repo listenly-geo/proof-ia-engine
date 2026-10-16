@@ -1680,6 +1680,31 @@ function duplicateReason_(context, index, email) {
   return '';
 }
 
+// Espacement RÉEL des envois, TOUS passages et TOUS moteurs confondus (1ers
+// mails + relances + relances d'intégration, moteur SaaS ET Opportunités).
+// Utilities.sleep() après l'envoi n'espaçait que les envois À L'INTÉRIEUR
+// d'une même boucle : si le watchdog force un passage de rattrapage juste
+// après le passage normal (ou si un passage Opportunités tombe près d'un
+// passage SaaS), un envoi du premier passage et un envoi du second pouvaient
+// tomber à quelques secondes d'écart malgré SEND_DELAY_MS — repéré le 16/10
+// (rapport quotidien : erreurs "Trop d'appels..." + rafale à 0 s entre deux
+// relances). Cette fonction retient l'heure du DERNIER envoi réel dans les
+// propriétés du script (donc partagée par tous les passages et moteurs) et
+// attend, avant d'envoyer, ce qu'il reste de SEND_DELAY_MS depuis ce dernier
+// envoi.
+function waitForSendSlot_() {
+  const props = PropertiesService.getScriptProperties();
+  const delayMs = getNumberSetting_('SEND_DELAY_MS', 18000);
+  const lastAt = Number(props.getProperty('LAST_SEND_AT_MS') || 0);
+  const elapsed = Date.now() - lastAt;
+
+  if (lastAt && elapsed < delayMs) {
+    Utilities.sleep(delayMs - elapsed);
+  }
+
+  props.setProperty('LAST_SEND_AT_MS', String(Date.now()));
+}
+
 function processInitialQueue_(context, cap) {
   let remaining = Math.max(
     0,
@@ -1820,6 +1845,12 @@ function processInitialQueue_(context, cap) {
 
       SpreadsheetApp.flush();
 
+      // Espacement RÉEL entre deux envois, tous passages et tous moteurs
+      // confondus (voir waitForSendSlot_). Posé AVANT l'envoi (et non plus
+      // après) pour que ça reste vrai même si le watchdog force un passage
+      // de rattrapage juste après celui-ci.
+      waitForSendSlot_();
+
       GmailApp.sendEmail(
         recipient,
         draft.subject,
@@ -1840,10 +1871,6 @@ function processInitialQueue_(context, cap) {
       // bon modèle part bien — ça aurait permis de détecter immédiatement le
       // bug de cache qui envoyait l'ancien corps de mail.
       saveLastSentSample_(draft.subject, draft.body);
-
-      // Espacement réel entre deux envois pour éviter un pattern de rafale
-      // (plusieurs mails en quelques secondes) qui dégrade la délivrabilité.
-      Utilities.sleep(getNumberSetting_('SEND_DELAY_MS', 18000));
 
       const thread = findSentThread_(
         recipient,
@@ -2036,27 +2063,36 @@ function processFollowUps_(context) {
         age >= CONFIG.FOLLOW_UP_2_DAYS &&
         !row['Relance 2 envoyée']
       ) {
+        waitForSendSlot_();
+
         sendFollowUp_(
           thread,
           recipient,
           followUp2_(row)
         );
 
+        // Horodatage pris JUSTE APRÈS l'envoi réel (et non plus la variable
+        // `now` figée en haut de la fonction) : sinon deux relances envoyées
+        // dans le même passage, bien espacées en réalité par SEND_DELAY_MS,
+        // se retrouvaient avec exactement le même horodatage dans la feuille
+        // — ce qui faisait croire au diagnostic de rafale à un envoi à 0 s
+        // d'écart alors que l'envoi Gmail lui-même était correctement espacé.
         writeFields_(context, sheetRow, {
           'À relancer': false,
           'Statut prospection': 'Relance 2',
-          'Relance 2 envoyée': now,
+          'Relance 2 envoyée': new Date(),
           'Prochaine relance': '',
           'État envoi': 'Cycle terminé — attente de réponse',
           'Erreur envoi': ''
         });
 
         remaining--;
-        Utilities.sleep(getNumberSetting_('SEND_DELAY_MS', 18000));
       } else if (
         age >= CONFIG.FOLLOW_UP_1_DAYS &&
         !row['Relance 1 envoyée']
       ) {
+        waitForSendSlot_();
+
         sendFollowUp_(
           thread,
           recipient,
@@ -2068,7 +2104,7 @@ function processFollowUps_(context) {
         writeFields_(context, sheetRow, {
           'À relancer': followUp2On,
           'Statut prospection': 'Relance 1',
-          'Relance 1 envoyée': now,
+          'Relance 1 envoyée': new Date(),
           'Prochaine relance': followUp2On ? addDays_(sentAt, CONFIG.FOLLOW_UP_2_DAYS) : '',
           'État envoi': followUp2On
             ? 'Relance 1 envoyée'
@@ -2077,7 +2113,6 @@ function processFollowUps_(context) {
         });
 
         remaining--;
-        Utilities.sleep(getNumberSetting_('SEND_DELAY_MS', 18000));
       }
     } catch (error) {
       writeFields_(context, sheetRow, {
@@ -2237,23 +2272,25 @@ function processIntegrationReminders_(context) {
 
     try {
       if (age >= j2 && !row['Relance intégration 2 envoyée']) {
+        waitForSendSlot_();
+
         sendIntegrationReminder_(thread, recipient, integrationFollowUp2_(row));
 
         writeFields_(context, sheetRow, {
-          'Relance intégration 2 envoyée': now
+          'Relance intégration 2 envoyée': new Date()
         });
 
         remaining--;
-        Utilities.sleep(getNumberSetting_('SEND_DELAY_MS', 18000));
       } else if (age >= j1 && !row['Relance intégration 1 envoyée']) {
+        waitForSendSlot_();
+
         sendIntegrationReminder_(thread, recipient, integrationFollowUp1_(row));
 
         writeFields_(context, sheetRow, {
-          'Relance intégration 1 envoyée': now
+          'Relance intégration 1 envoyée': new Date()
         });
 
         remaining--;
-        Utilities.sleep(getNumberSetting_('SEND_DELAY_MS', 18000));
       }
     } catch (error) {
       writeFields_(context, sheetRow, {
@@ -4778,11 +4815,12 @@ function processInitialQueueOpp_(context, cap) {
       writeFieldsOpp_(context, sheetRow, { 'Envoyer': false });
       SpreadsheetApp.flush();
 
+      waitForSendSlot_();
+
       GmailApp.sendEmail(recipient, draft.subject, draft.body, options);
       sent = true;
 
       const now = new Date();
-      Utilities.sleep(getNumberSetting_('SEND_DELAY_MS', 18000));
 
       const thread = findSentThread_(recipient, draft.subject);
 
@@ -4891,7 +4929,14 @@ function detectBouncesOpp_(context) {
 function processFollowUpsOpp_(context) {
   const now = new Date();
 
-  for (let i = 0; i < context.rows.length; i++) {
+  // Même plafond + espacement réel que processFollowUps_ (moteur SaaS) :
+  // sans ça, plusieurs lignes Opportunités franchissant leur seuil le même
+  // jour pouvaient partir d'un coup, sans aucune pause. Ce garde-fou
+  // manquait ici — repéré le 16/10 (le moteur SaaS l'avait déjà depuis le
+  // 12/10).
+  let remaining = getNumberSetting_('MAX_FOLLOWUPS_PER_RUN', 10);
+
+  for (let i = 0; i < context.rows.length && remaining > 0; i++) {
     const row = context.rows[i];
 
     if (
@@ -4914,32 +4959,40 @@ function processFollowUpsOpp_(context) {
         age >= getNumberSetting_('RELANCE_OPP_J2', 9) &&
         !row['Relance 2 envoyée']
       ) {
+        waitForSendSlot_();
+
         sendFollowUp_(thread, recipient, followUp2Opp_(row));
 
         writeFieldsOpp_(context, sheetRow, {
           'À relancer': false,
-          'Relance 2 envoyée': now,
+          'Relance 2 envoyée': new Date(),
           'Prochaine relance': '',
           'État envoi': 'Cycle terminé — attente de réponse',
           'Erreur envoi': ''
         });
+
+        remaining--;
       } else if (
         age >= getNumberSetting_('RELANCE_OPP_J1', 4) &&
         !row['Relance 1 envoyée']
       ) {
+        waitForSendSlot_();
+
         sendFollowUp_(thread, recipient, followUp1Opp_(row));
 
         const followUp2On = getBoolSetting_('FOLLOWUP_2_ENABLED_OPP');
 
         writeFieldsOpp_(context, sheetRow, {
           'À relancer': followUp2On,
-          'Relance 1 envoyée': now,
+          'Relance 1 envoyée': new Date(),
           'Prochaine relance': followUp2On
             ? addDays_(sentAt, getNumberSetting_('RELANCE_OPP_J2', 9))
             : '',
           'État envoi': followUp2On ? 'Relance 1 envoyée' : 'Cycle terminé — attente de réponse',
           'Erreur envoi': ''
         });
+
+        remaining--;
       }
     } catch (error) {
       writeFieldsOpp_(context, sheetRow, {
