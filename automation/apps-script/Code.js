@@ -4307,6 +4307,32 @@ function safeError_(error) {
   ).slice(0, 500);
 }
 
+// Onglet "Partenariat" : recense toute proposition de partenariat commercial
+// (catégorie G — licensing / royalties / contrat) remontée par l'agent de
+// réponse IA, pour qu'Etienne ait une vue d'ensemble sans aller chercher
+// chaque fil dans Gmail. Créé automatiquement au premier appel s'il
+// n'existe pas encore (demandé le 16/10/2026).
+function logPartnershipProposal_(fields) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('Partenariat');
+
+  if (!sheet) {
+    sheet = ss.insertSheet('Partenariat');
+    sheet.getRange(1, 1, 1, 5).setValues([[
+      'Nom du SaaS', 'Lien site web', 'Proposition', 'Lien du mail', 'Brouillon de réponse'
+    ]]);
+    sheet.setFrozenRows(1);
+  }
+
+  sheet.appendRow([
+    fields.nom || '',
+    fields.site || '',
+    fields.proposition || '',
+    fields.lienMail || '',
+    fields.brouillon || ''
+  ]);
+}
+
 function getUiSafely_() {
   try {
     return SpreadsheetApp.getUi();
@@ -5270,6 +5296,23 @@ function processReplyAgentQueue_(context) {
         } catch (draftError) {
           logJournal_('ReplyAgent', 'Erreur création brouillon Gmail réel', String(row['Nom du SaaS'] || '') +
             ' : ' + safeError_(draftError));
+        }
+
+        // Demandé par Etienne le 16/10 : toute proposition de partenariat
+        // commercial (catégorie G) est aussi recensée dans un onglet dédié
+        // "Partenariat", pour avoir une vue d'ensemble sans fouiller dans
+        // Gmail ligne par ligne.
+        try {
+          logPartnershipProposal_({
+            nom: String(row['Nom du SaaS'] || ''),
+            site: String(row['Site'] || ''),
+            proposition: String(result.recipient_intent || '').trim(),
+            lienMail: 'https://mail.google.com/mail/u/0/#all/' + thread.getId(),
+            brouillon: body
+          });
+        } catch (logError) {
+          logJournal_('ReplyAgent', 'Erreur log onglet Partenariat', String(row['Nom du SaaS'] || '') +
+            ' : ' + safeError_(logError));
         }
       }
 
