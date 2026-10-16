@@ -4307,17 +4307,21 @@ function safeError_(error) {
   ).slice(0, 500);
 }
 
-// Onglet "Partenariat" : recense toute proposition de partenariat commercial
+// Onglet "Licencings" : recense toute proposition de partenariat commercial
 // (catégorie G — licensing / royalties / contrat) remontée par l'agent de
 // réponse IA, pour qu'Etienne ait une vue d'ensemble sans aller chercher
-// chaque fil dans Gmail. Créé automatiquement au premier appel s'il
-// n'existe pas encore (demandé le 16/10/2026).
+// chaque fil dans Gmail. Nommé "Licencings" (et non "Partenariat") pour ne
+// pas le confondre avec les onglets "Partenaires" / "Partenaires actifs"
+// (SaaS qui ont déjà la voix dans leur catalogue) — ici ce sont des
+// discussions de licensing/royalties, pas des intégrations déjà en place.
+// Créé automatiquement au premier appel s'il n'existe pas encore (demandé
+// le 16/10/2026, renommé le même jour).
 function logPartnershipProposal_(fields) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName('Partenariat');
+  let sheet = ss.getSheetByName('Licencings');
 
   if (!sheet) {
-    sheet = ss.insertSheet('Partenariat');
+    sheet = ss.insertSheet('Licencings');
     sheet.getRange(1, 1, 1, 5).setValues([[
       'Nom du SaaS', 'Lien site web', 'Proposition', 'Lien du mail', 'Brouillon de réponse'
     ]]);
@@ -5300,7 +5304,7 @@ function processReplyAgentQueue_(context) {
 
         // Demandé par Etienne le 16/10 : toute proposition de partenariat
         // commercial (catégorie G) est aussi recensée dans un onglet dédié
-        // "Partenariat", pour avoir une vue d'ensemble sans fouiller dans
+        // "Licencings", pour avoir une vue d'ensemble sans fouiller dans
         // Gmail ligne par ligne.
         try {
           logPartnershipProposal_({
@@ -5311,7 +5315,7 @@ function processReplyAgentQueue_(context) {
             brouillon: body
           });
         } catch (logError) {
-          logJournal_('ReplyAgent', 'Erreur log onglet Partenariat', String(row['Nom du SaaS'] || '') +
+          logJournal_('ReplyAgent', 'Erreur log onglet Licencings', String(row['Nom du SaaS'] || '') +
             ' : ' + safeError_(logError));
         }
       }
