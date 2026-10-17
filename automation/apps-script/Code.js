@@ -4304,6 +4304,22 @@ function daysBetween_(from, to) {
 // trouvée, la phrase est ajoutée juste avant la formule de politesse.
 const WHATSAPP_CTA_ = '**Could you send me your partnership proposal directly on WhatsApp?**\nhttps://wa.me/33659636801';
 
+// Message de politesse pur (remerciement, "you're welcome", "let us know"...)
+// sans question ni demande d'information : l'IA n'y répond pas.
+function isPoliteClosing_(text) {
+  const t = String(text || '').trim();
+
+  if (!t || t.length > 350) return false;
+  if (t.indexOf('?') !== -1) return false;
+
+  // Si le message parle d'une info utile (ID, application, produit...), on répond.
+  if (/\b(id|app|application|product|produit|need|require|provide|send|what|which|how|tool|platform|voice)\b/i.test(t)) {
+    return false;
+  }
+
+  return /\b(thank|thanks|appreciate|welcome|have a (nice|great)|best regards|noted|shared (them|this|it)|reach out|let (you|us) know|looking forward|glad|cheers)\b/i.test(t);
+}
+
 // Signature complète validée le 17/10/2026 (sans photo pour l'instant).
 const LICENCING_SIGNATURE_ = 'Best,\nCorentin\nCorentin AI Voice\nInstagram : https://www.instagram.com/corentin_n1_voice_/';
 
@@ -5254,6 +5270,31 @@ function processReplyAgentQueue_(context) {
       continue;
     }
 
+    // Garde-fous anti-boucle (17/10/2026) : l'IA ne répond pas à l'infini.
+    // 1) Pas plus de MAX_AI_REPLIES_PER_CONV réponses IA par conversation
+    //    (2 par défaut) — au-delà, Etienne reprend la main à la main.
+    // 2) Pas de réponse aux simples messages de politesse ("thanks", "you're
+    //    welcome"...) qui n'apportent rien (ni question, ni information).
+    const convKey = 'AI_REPLIES_' + String(row['ID conversation']);
+    const sentSoFar = Number(PropertiesService.getScriptProperties().getProperty(convKey) || 0);
+    const maxPerConv = getNumberSetting_('MAX_AI_REPLIES_PER_CONV', 2);
+
+    if (sentSoFar >= maxPerConv) {
+      writeFields_(context, sheetRow, {
+        'Dernier message IA (ID)': String(reply.id || ''),
+        'Statut réponse IA': 'Limite atteinte (' + maxPerConv + ' réponses IA) — à traiter à la main'
+      });
+      continue;
+    }
+
+    if (isPoliteClosing_(reply.text)) {
+      writeFields_(context, sheetRow, {
+        'Dernier message IA (ID)': String(reply.id || ''),
+        'Statut réponse IA': 'Aucune réponse : simple message de politesse'
+      });
+      continue;
+    }
+
     let result;
 
     try {
@@ -5327,6 +5368,9 @@ function processReplyAgentQueue_(context) {
     // Licencing (G) : envoi automatique depuis le 17/10/2026 (décision
     // d'Etienne), tant que la confiance est suffisante et qu'aucun terme
     // contractuel n'est détecté (human_review_required).
+    // Compte cette réponse IA pour la limite de la conversation.
+    PropertiesService.getScriptProperties().setProperty(convKey, String(sentSoFar + 1));
+
     const needsHuman =
       !getBoolSetting_('REPLY_AGENT_AUTO_SEND') ||
       !!result.human_review_required ||
