@@ -4346,7 +4346,7 @@ function testerReponseLicencing() {
 
   waitForSendSlot_();
   GmailApp.sendEmail(to, '[TEST] Re: Question concerning my voice on your platform', body, {
-    htmlBody: formatBodyHtml_(body),
+    htmlBody: asciiSafeHtml_(stripEmoji_(formatBodyHtml_(body))),
     name: 'Corentin AI Voice'
   });
   SpreadsheetApp.getActive().toast('Mail de test envoyé à ' + to, 'Test licencing', 8);
