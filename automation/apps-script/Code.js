@@ -5364,8 +5364,15 @@ function processReplyAgentQueue_(context) {
     // et needsHuman (plus bas) force systématiquement le passage en
     // validation manuelle, quels que soient AUTO_SEND / la confiance.
     const classification = String(result.classification || '').trim().toUpperCase();
+    // Filet de sécurité (18/10/2026) : si l'IA classe mal le mail (J, C...),
+    // on détecte quand même les sujets licensing dans le message reçu ou
+    // dans la réponse, pour que le WhatsApp et la signature soient ajoutés.
+    const commercialKeywords = /licens|royalt|exclusiv|minimum guarantee|partnership|contract|revenue share|one-time fee/i;
     const isCommercialPartnership =
-      classification === 'G' || classification.indexOf('COMMERCIAL_PARTNERSHIP') !== -1;
+      classification === 'G' ||
+      classification.indexOf('COMMERCIAL_PARTNERSHIP') !== -1 ||
+      commercialKeywords.test(String(reply.text || '')) ||
+      commercialKeywords.test(String(result.reply_body || ''));
 
     // Licensing (G) : la dernière question de l'IA est remplacée par une
     // phrase en gras proposant de discuter sur WhatsApp (lien direct).
