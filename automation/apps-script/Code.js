@@ -5730,6 +5730,13 @@ function testReplyAgent() {
     return;
   }
 
+  // Même traitement que le vrai envoi : WhatsApp + signature pour le
+  // licensing, et aucun emoji. Sinon le test ne reflète pas le mail réel.
+  const testKeywords = /licens|royalt|exclusiv|minimum guarantee|partnership|contract|revenue share|one-time fee/i;
+  if (String(result.classification || '').trim().toUpperCase() === 'G' || testKeywords.test(String(result.reply_body || ''))) {
+    result.reply_body = stripEmoji_(applyWhatsAppCta_(String(result.reply_body || '')));
+  }
+
   const confidence = Number(result.confidence);
   const needsHuman = !!result.human_review_required ||
     !isFinite(confidence) || confidence < 0.75;
