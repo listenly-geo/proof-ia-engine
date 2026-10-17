@@ -5505,14 +5505,15 @@ function processScheduledReplies_(context) {
     try {
       const messages = thread.getMessages();
       const options = mailOptions_();
-      options.htmlBody = asciiSafeHtml_(
+      // Pas d'emojis dans les réponses automatiques (ils peuvent mal s'afficher).
+      options.htmlBody = asciiSafeHtml_(stripEmoji_(
         '<div style="background:#ffffff;font-family:Arial,Helvetica,sans-serif;' +
         'font-size:16px;line-height:1.5;color:#222;margin:0;">' +
         formatBodyHtml_(body) +
         '</div>'
-      );
+      ));
 
-      messages[messages.length - 1].replyAll(body, options);
+      messages[messages.length - 1].replyAll(stripEmoji_(body), options);
 
       writeFields_(context, sheetRow, {
         'Statut réponse IA': 'Envoyée',
