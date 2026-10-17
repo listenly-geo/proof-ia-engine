@@ -4309,6 +4309,14 @@ function daysBetween_(from, to) {
 // trouvée, la phrase est ajoutée juste avant la formule de politesse.
 const WHATSAPP_CTA_ = '**Could you contact me on [WhatsApp](https://wa.me/33659636801) to discuss this partnership?**';
 
+// Détecte une possibilité de collaboration / partenariat (mots relevés dans
+// les propositions reçues : licence, royalties, exclusivité, studio, pilote,
+// attribution, process de partenariat, offre, commission...). Analyse du 17/10/2026.
+function isPartnershipText_(text) {
+  return /licen[cs]|royalt|usage-based|exclusiv|minimum guarantee|revenue share|one-time|commission|payment|pricing|commercial|partnership|partner|collab|pilot|proposal|offer|framework|enterprise|attribution|studio|recording|sales team|contract|integrat/i
+    .test(String(text || ''));
+}
+
 // Message de politesse pur (remerciement, "you're welcome", "let us know"...)
 // sans question ni demande d'information : l'IA n'y répond pas.
 function isPoliteClosing_(text) {
@@ -5372,12 +5380,12 @@ function processReplyAgentQueue_(context) {
     // Filet de sécurité (18/10/2026) : si l'IA classe mal le mail (J, C...),
     // on détecte quand même les sujets licensing dans le message reçu ou
     // dans la réponse, pour que le WhatsApp et la signature soient ajoutés.
-    const commercialKeywords = /licens|royalt|exclusiv|minimum guarantee|partnership|contract|revenue share|one-time fee/i;
+    
     const isCommercialPartnership =
       classification === 'G' ||
       classification.indexOf('COMMERCIAL_PARTNERSHIP') !== -1 ||
-      commercialKeywords.test(String(reply.text || '')) ||
-      commercialKeywords.test(String(result.reply_body || ''));
+      isPartnershipText_(reply.text) ||
+      isPartnershipText_(result.reply_body);
 
     // Licensing (G) : la dernière question de l'IA est remplacée par une
     // phrase en gras proposant de discuter sur WhatsApp (lien direct).
@@ -5737,8 +5745,8 @@ function testReplyAgent() {
 
   // Même traitement que le vrai envoi : WhatsApp + signature pour le
   // licensing, et aucun emoji. Sinon le test ne reflète pas le mail réel.
-  const testKeywords = /licens|royalt|exclusiv|minimum guarantee|partnership|contract|revenue share|one-time fee/i;
-  if (String(result.classification || '').trim().toUpperCase() === 'G' || testKeywords.test(String(result.reply_body || ''))) {
+  
+  if (String(result.classification || '').trim().toUpperCase() === 'G' || isPartnershipText_(result.reply_body)) {
     result.reply_body = stripEmoji_(applyWhatsAppCta_(String(result.reply_body || '')));
   }
 
