@@ -339,6 +339,7 @@ function onOpen() {
     .addItem('Découvrir des prospects maintenant', 'discoverProspectsNow')
     .addItem('Envoyer le rapport maintenant', 'sendDailyReportNow')
     .addItem('TEST : envoyer une réponse licencing à moi', 'testerReponseLicencing')
+    .addItem('ENVOI LICENCING : 5 propositions (lundi 8h-19h)', 'envoyerLicencingLundi_')
     .addItem(
       'Mettre en file les « À contacter » avec e-mail valide',
       'queueValidRows'
@@ -6137,3 +6138,150 @@ function pingTest() {
 }
 
 // FIN DU SCRIPT COMPLET
+
+// ENVOI LICENCING — 5 propositions validées (aperçu du 17/10/2026).
+// Lancer une seule fois, lundi 19/10 entre 8h et 19h (Paris), depuis le menu.
+// Supprime les anciens brouillons Gmail de chaque fil, puis envoie dans le fil.
+// Inworld est exclu (déjà répondu à la main le 08/10).
+const LICENCING_LUNDI_ = [
+  {
+    saas: 'Voice-Swap',
+    greet: 'Hi there,',
+    paras: [
+      'Thanks a lot for getting back to me. I\'m definitely interested in a native integration with Voice-Swap.',
+      '**Voice ID & API:** IHngRooVccHyPqB4uQkG. The existing voice can be integrated without a new recording.',
+      '**Licensing:** In general, one payment for the integration (recording, strategy, etc.) plus a commission. The details can be discussed once we have a clearer picture of your needs.',
+      'You\'ll find the technical specs and examples on my main website: https://corentinvoice.live/',
+      WHATSAPP_CTA_
+    ],
+    closing: 'Looking forward to it.'
+  },
+  {
+    saas: 'poddubstudio',
+    greet: 'Hi Poddub team,',
+    paras: [
+      'Thanks a lot for your detailed message. Multilingual dubbing is a good fit for this voice.',
+      '**Voice ID & API:** IHngRooVccHyPqB4uQkG. Integration does not require a new recording.',
+      '**Languages:** 15+ languages, with the same voice identity across markets.',
+      '**Licensing:** In general, one payment for the integration (recording, strategy, etc.) plus a commission. I\'m happy to discuss the structure that works for your platform.',
+      'You\'ll find the technical specs and examples on my main website: https://corentinvoice.live/',
+      WHATSAPP_CTA_
+    ],
+    closing: 'Looking forward to discussing this further.'
+  },
+  {
+    saas: 'VidUp',
+    greet: 'Hi VidUp team,',
+    paras: [
+      'Thanks a lot for the detailed guidance, this is really helpful.',
+      '**Voice ID & API:** IHngRooVccHyPqB4uQkG.',
+      '**Licensing:** In general, one payment for the integration (recording, strategy, etc.) plus a commission. I\'m happy to start from your Enterprise licensing terms and discuss the structure.',
+      'You\'ll find the language list and examples on my main website: https://corentinvoice.live/',
+      WHATSAPP_CTA_
+    ],
+    closing: 'Looking forward to speaking with your sales team.'
+  },
+  {
+    saas: 'PiGenTek',
+    greet: 'Hi Aniruddha,',
+    paras: [
+      'Thanks a lot for this. I\'m very interested in PiGenTek\'s Professional Voices direction, and I think this could be a good fit.',
+      '**Studio recording:** A dedicated session can be arranged from a script you provide, if needed.',
+      '**Languages:** 15+ languages, with the same professional voice identity.',
+      '**Attribution:** Yes, I\'m comfortable with my voice being listed as a named option inside PiGenTek.',
+      '**Licensing:** In general, one payment for the integration (recording, strategy, etc.) plus a commission. I\'d be glad to review your licensing framework and to be an early pilot partner.',
+      'You\'ll find the technical specs and examples on my main website: https://corentinvoice.live/',
+      WHATSAPP_CTA_
+    ],
+    closing: 'Looking forward to this.'
+  },
+  {
+    saas: 'Qiroq',
+    greet: 'Hi Aditya,',
+    paras: [
+      'Thanks a lot for the positive response. I\'m excited about bringing the voice to Qiroq.',
+      '**Voice ID & API:** IHngRooVccHyPqB4uQkG.',
+      '**Licensing:** In general, one payment for the integration (recording, strategy, etc.) plus a commission. My current setup should allow me to license the voice to multiple platforms, depending on the terms we agree on.',
+      'You\'ll find the technical specs and language availability on my main website: https://corentinvoice.live/',
+      WHATSAPP_CTA_
+    ],
+    closing: 'Looking forward to exploring this further.'
+  }
+];
+
+function envoyerLicencingLundi_() {
+  const ui = SpreadsheetApp.getUi();
+  const parisParts = Utilities.formatDate(new Date(), 'Europe/Paris', 'u H').split(' ');
+  const dayOfWeek = Number(parisParts[0]);
+  const hour = Number(parisParts[1]);
+
+  if (dayOfWeek > 5 || hour < 8 || hour >= 19) {
+    ui.alert('Envoi annulé : ce bouton n\'envoie que du lundi au vendredi, entre 8h et 19h (Paris).');
+    return;
+  }
+
+  if (getBoolSetting_('MASTER_PAUSE')) {
+    ui.alert('Envoi annulé : MASTER_PAUSE est à TRUE dans Réglages.');
+    return;
+  }
+
+  const confirm = ui.alert(
+    'Envoyer les 5 propositions licencing maintenant ?',
+    'Les anciens brouillons Gmail de ces 5 fils seront supprimés, puis chaque mail sera envoyé dans son fil.',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (confirm !== ui.Button.OK) return;
+
+  const context = getContext_();
+  const props = PropertiesService.getScriptProperties();
+  const results = [];
+
+  LICENCING_LUNDI_.forEach(function (item) {
+    const row = context.rows.find(function (r) {
+      return String(r['Nom du SaaS'] || '').trim() === item.saas;
+    });
+    if (!row || !row['ID conversation']) {
+      results.push(item.saas + ' : fil introuvable');
+      return;
+    }
+
+    const key = 'LICENCING_SENT_' + row['ID conversation'];
+    if (props.getProperty(key)) {
+      results.push(item.saas + ' : déjà envoyé');
+      return;
+    }
+
+    const thread = getThreadSafely_(row['ID conversation']);
+    if (!thread) {
+      results.push(item.saas + ' : fil introuvable');
+      return;
+    }
+
+    // Supprime les anciens brouillons de ce fil avant d'envoyer.
+    GmailApp.getDrafts().forEach(function (draft) {
+      try {
+        if (draft.getMessage().getThread().getId() === thread.getId()) {
+          draft.deleteDraft();
+        }
+      } catch (error) {
+        logJournal_('Licencings', 'Erreur suppression brouillon', item.saas + ' : ' + safeError_(error));
+      }
+    });
+
+    const body = [item.greet, item.paras.join('\n\n'), item.closing, LICENCING_SIGNATURE_].join('\n\n');
+
+    waitForSendSlot_();
+    thread.replyAll(stripEmoji_(body), {
+      htmlBody: asciiSafeHtml_(stripEmoji_(
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.5;color:#222;margin:0;">' +
+        formatBodyHtml_(body) +
+        '</div>'
+      )),
+      name: 'Corentin AI Voice'
+    });
+    props.setProperty(key, new Date().toISOString());
+    results.push(item.saas + ' : envoyé');
+  });
+
+  ui.alert('Résultat :\n' + results.join('\n'));
+}
