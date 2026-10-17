@@ -4302,29 +4302,37 @@ function daysBetween_(from, to) {
 // Remplace la question finale de la réponse licencing par la proposition
 // WhatsApp validée par Etienne le 17/10/2026. Si aucune question n'est
 // trouvée, la phrase est ajoutée juste avant la formule de politesse.
-const WHATSAPP_CTA_ = '**Could you contact me on WhatsApp to discuss this partnership?**\nhttps://wa.me/33659636801';
+const WHATSAPP_CTA_ = '**Could you send me your partnership proposal directly on WhatsApp?**\nhttps://wa.me/33659636801';
+
+// Signature complète validée le 17/10/2026 (sans photo pour l'instant).
+const LICENCING_SIGNATURE_ = 'Best,\nCorentin\nCorentin AI Voice\nInstagram : https://www.instagram.com/corentin_n1_voice_/';
 
 function applyWhatsAppCta_(text) {
   const paragraphs = String(text).trim().split(/\n{2,}/);
 
+  // Ce qui précède la formule de politesse (la signature est remplacée).
+  let signoff = -1;
   for (let i = paragraphs.length - 1; i >= 0; i--) {
-    if (/\?\s*$/.test(paragraphs[i].trim())) {
-      paragraphs[i] = WHATSAPP_CTA_;
-      return paragraphs.join('\n\n');
+    if (/^(best|kind regards|regards|cheers)/i.test(paragraphs[i].trim())) {
+      signoff = i;
+      break;
     }
   }
 
-  const signoff = paragraphs.findIndex(function (p) {
-    return /^(best|kind regards|regards|cheers)/i.test(p.trim());
-  });
+  const base = signoff >= 0 ? paragraphs.slice(0, signoff) : paragraphs.slice();
 
-  if (signoff > 0) {
-    paragraphs.splice(signoff, 0, WHATSAPP_CTA_);
-  } else {
-    paragraphs.push(WHATSAPP_CTA_);
+  let replaced = false;
+  for (let i = base.length - 1; i >= 0; i--) {
+    if (/\?\s*$/.test(base[i].trim())) {
+      base[i] = WHATSAPP_CTA_;
+      replaced = true;
+      break;
+    }
   }
 
-  return paragraphs.join('\n\n');
+  if (!replaced) base.push(WHATSAPP_CTA_);
+
+  return base.concat([LICENCING_SIGNATURE_]).join('\n\n');
 }
 
 function safeError_(error) {
@@ -5316,7 +5324,10 @@ function processReplyAgentQueue_(context) {
     // quelle que soit la confiance de l'IA. Seul un passage explicite de
     // REPLY_AGENT_AUTO_SEND à TRUE dans Réglages réactive l'envoi auto pour
     // les réponses à confiance élevée.
-    const needsHuman = isCommercialPartnership ||
+    // Licencing (G) : envoi automatique depuis le 17/10/2026 (décision
+    // d'Etienne), tant que la confiance est suffisante et qu'aucun terme
+    // contractuel n'est détecté (human_review_required).
+    const needsHuman =
       !getBoolSetting_('REPLY_AGENT_AUTO_SEND') ||
       !!result.human_review_required ||
       !isFinite(Number(result.confidence)) ||
