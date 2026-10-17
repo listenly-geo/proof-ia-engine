@@ -2311,7 +2311,9 @@ function plainBodyToHtml_(body) {
     .map(function (block) { return block.trim(); })
     .filter(Boolean)
     .map(function (paragraph) {
-      let text = escapeHtml_(paragraph).replace(/\n/g, '<br>');
+      let text = escapeHtml_(paragraph)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\n/g, '<br>');
 
       text = text.replace(/https?:\/\/[^\s<]+/g, function (url) {
         return '<a href="' + url + '" style="color:#1155cc;text-decoration:underline;">' + url + '</a>';
@@ -3853,7 +3855,9 @@ function formatBodyHtml_(body) {
   let emoji2Used = false;
 
   return paragraphs.map(function (paragraph) {
-    let text = escapeHtml_(paragraph).replace(/\n/g, '<br>');
+    let text = escapeHtml_(paragraph)
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\n/g, '<br>');
 
     // Markdown **gras** (utilisé par l'IA de réponse automatique, entre
     // autres) converti en vrai gras HTML — sinon les astérisques
@@ -4303,7 +4307,7 @@ function daysBetween_(from, to) {
 // Remplace la question finale de la réponse licencing par la proposition
 // WhatsApp validée par Etienne le 17/10/2026. Si aucune question n'est
 // trouvée, la phrase est ajoutée juste avant la formule de politesse.
-const WHATSAPP_CTA_ = '**Could you send me your partnership proposal directly on WhatsApp?**\nhttps://wa.me/33659636801';
+const WHATSAPP_CTA_ = '**Could you contact me on [WhatsApp](https://wa.me/33659636801) to discuss this partnership?**';
 
 // Message de politesse pur (remerciement, "you're welcome", "let us know"...)
 // sans question ni demande d'information : l'IA n'y répond pas.
@@ -4357,6 +4361,7 @@ function testerReponseLicencing() {
 // s'affichent en caractères cassés (�) chez le destinataire.
 function stripEmoji_(text) {
   return String(text || '')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1 ($2)')
     .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/[ \t]{2,}/g, ' ');
