@@ -338,6 +338,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Découvrir des prospects maintenant', 'discoverProspectsNow')
     .addItem('Envoyer le rapport maintenant', 'sendDailyReportNow')
+    .addItem('TEST : envoyer une réponse licencing à moi', 'testerReponseLicencing')
     .addItem(
       'Mettre en file les « À contacter » avec e-mail valide',
       'queueValidRows'
@@ -4322,6 +4323,34 @@ function isPoliteClosing_(text) {
 
 // Signature complète validée le 17/10/2026 (sans photo pour l'instant).
 const LICENCING_SIGNATURE_ = 'Best,\nCorentin\nCorentin AI Voice\nInstagram : https://www.instagram.com/corentin_n1_voice_/';
+
+// TEST (18/10/2026) : envoie UNE réponse licencing (Voice-Swap) à l'adresse
+// de test d'Etienne, pour valider le rendu avant tout envoi à un prospect.
+function testerReponseLicencing() {
+  const to = 'etiennecugnetpro@gmail.com';
+  const body = [
+    'Hi there,',
+    '',
+    'Thanks a lot for getting back to me 🙂',
+    '',
+    "I'm definitely interested in exploring a native integration with Voice-Swap. That sounds like a great opportunity.",
+    '',
+    'The quickest way to go through the details (studio session or existing voice, commercial structure, exclusivity) is to talk directly on WhatsApp.',
+    '',
+    WHATSAPP_CTA_,
+    '',
+    'Looking forward to it.',
+    '',
+    LICENCING_SIGNATURE_
+  ].join('\n');
+
+  waitForSendSlot_();
+  GmailApp.sendEmail(to, '[TEST] Re: Question concerning my voice on your platform', body, {
+    htmlBody: formatBodyHtml_(body),
+    name: 'Corentin AI Voice'
+  });
+  SpreadsheetApp.getActive().toast('Mail de test envoyé à ' + to, 'Test licencing', 8);
+}
 
 function applyWhatsAppCta_(text) {
   const paragraphs = String(text).trim().split(/\n{2,}/);
