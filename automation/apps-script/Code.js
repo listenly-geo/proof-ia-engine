@@ -5409,7 +5409,10 @@ function processReplyAgentQueue_(context) {
     // Compte cette réponse IA pour la limite de la conversation.
     PropertiesService.getScriptProperties().setProperty(convKey, String(sentSoFar + 1));
 
+    // Licencing (catégorie G) : brouillon à valider par Etienne tant que le
+    // texte de l'IA n'est pas aligné sur les modèles validés (17/10/2026).
     const needsHuman =
+      isCommercialPartnership ||
       !getBoolSetting_('REPLY_AGENT_AUTO_SEND') ||
       !!result.human_review_required ||
       !isFinite(Number(result.confidence)) ||
