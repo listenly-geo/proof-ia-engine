@@ -4331,7 +4331,7 @@ function testerReponseLicencing() {
   const body = [
     'Hi there,',
     '',
-    'Thanks a lot for getting back to me 🙂',
+    'Thanks a lot for getting back to me!',
     '',
     "I'm definitely interested in exploring a native integration with Voice-Swap. That sounds like a great opportunity.",
     '',
@@ -4352,6 +4352,15 @@ function testerReponseLicencing() {
   SpreadsheetApp.getActive().toast('Mail de test envoyé à ' + to, 'Test licencing', 8);
 }
 
+
+// Retire les emojis des mails licencing : certains (🙂, drapeaux, etc.)
+// s'affichent en caractères cassés (�) chez le destinataire.
+function stripEmoji_(text) {
+  return String(text || '')
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ');
+}
 function applyWhatsAppCta_(text) {
   const paragraphs = String(text).trim().split(/\n{2,}/);
 
@@ -5361,7 +5370,7 @@ function processReplyAgentQueue_(context) {
     // Licensing (G) : la dernière question de l'IA est remplacée par une
     // phrase en gras proposant de discuter sur WhatsApp (lien direct).
     if (isCommercialPartnership && body) {
-      body = applyWhatsAppCta_(body);
+      body = stripEmoji_(applyWhatsAppCta_(body));
     }
 
     if (isCommercialPartnership) {
