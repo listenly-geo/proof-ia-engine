@@ -4313,7 +4313,7 @@ const WHATSAPP_CTA_ = '**Could you contact me on [WhatsApp](https://wa.me/336596
 // les propositions reçues : licence, royalties, exclusivité, studio, pilote,
 // attribution, process de partenariat, offre, commission...). Analyse du 17/10/2026.
 function isPartnershipText_(text) {
-  return /licen[cs]|royalt|usage-based|exclusiv|minimum guarantee|revenue share|one-time|commission|payment|pricing|commercial|partnership|partner|collab|pilot|proposal|offer|framework|enterprise|attribution|studio|recording|sales team|contract|integrat/i
+  return /licen[cs]|royalt|usage-based|exclusiv|minimum guarantee|revenue share|one-time|commission|payment|pricing|commercial|partnership|partner|collab|pilot|proposal|offer|framework|enterprise|attribution|sales team|contract/i
     .test(String(text || ''));
 }
 
