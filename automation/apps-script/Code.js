@@ -4299,6 +4299,34 @@ function daysBetween_(from, to) {
   );
 }
 
+// Remplace la question finale de la réponse licencing par la proposition
+// WhatsApp validée par Etienne le 17/10/2026. Si aucune question n'est
+// trouvée, la phrase est ajoutée juste avant la formule de politesse.
+const WHATSAPP_CTA_ = '**Could you contact me on WhatsApp to discuss this partnership?**\nhttps://wa.me/33659636801';
+
+function applyWhatsAppCta_(text) {
+  const paragraphs = String(text).trim().split(/\n{2,}/);
+
+  for (let i = paragraphs.length - 1; i >= 0; i--) {
+    if (/\?\s*$/.test(paragraphs[i].trim())) {
+      paragraphs[i] = WHATSAPP_CTA_;
+      return paragraphs.join('\n\n');
+    }
+  }
+
+  const signoff = paragraphs.findIndex(function (p) {
+    return /^(best|kind regards|regards|cheers)/i.test(p.trim());
+  });
+
+  if (signoff > 0) {
+    paragraphs.splice(signoff, 0, WHATSAPP_CTA_);
+  } else {
+    paragraphs.push(WHATSAPP_CTA_);
+  }
+
+  return paragraphs.join('\n\n');
+}
+
 function safeError_(error) {
   return String(
     error && error.message
@@ -5233,7 +5261,7 @@ function processReplyAgentQueue_(context) {
       continue;
     }
 
-    const body = String(result.reply_body || '').trim();
+    let body = String(result.reply_body || '').trim();
     const integrationConfirmed = !!result.integration_confirmed;
 
     const confirmationFields = integrationConfirmed
@@ -5251,6 +5279,12 @@ function processReplyAgentQueue_(context) {
     const classification = String(result.classification || '').trim().toUpperCase();
     const isCommercialPartnership =
       classification === 'G' || classification.indexOf('COMMERCIAL_PARTNERSHIP') !== -1;
+
+    // Licensing (G) : la dernière question de l'IA est remplacée par une
+    // phrase en gras proposant de discuter sur WhatsApp (lien direct).
+    if (isCommercialPartnership && body) {
+      body = applyWhatsAppCta_(body);
+    }
 
     if (isCommercialPartnership) {
       try {
