@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-10-15-postmaster-reputation-score'
+  CODE_VERSION: '2026-10-19-cache-gmail-aliases'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -3761,13 +3761,50 @@ function assertRequiredHeaders_() {
   });
 }
 
+// Cache mémoire valable pour la durée d'une seule exécution du script :
+// GmailApp.getAliases() est rappelée à l'identique à chaque fil vérifié dans
+// detectReplies_ / detectRepliesOpp_ / sendFollowUp_ / getLastExternalReply_,
+// soit jusqu'à plusieurs centaines d'appels Gmail strictement identiques par
+// passage horaire une fois que le nombre de prospects « en attente de
+// réponse » grandit. Repéré le 19/10/2026 comme cause du blocage Gmail
+// (« Service invoked too many times for one day: gmail » / « Trop d'appels
+// pour ce service aujourd'hui : gmail ») qui a empêché tout envoi les 17 et
+// 18/10. Ces variables repartent à null à chaque nouvelle exécution du
+// script (aucun risque de valeur périmée entre deux passages).
+let RAW_ALIASES_CACHE_ = null;
+
+function getRawAliases_() {
+  if (RAW_ALIASES_CACHE_ === null) {
+    RAW_ALIASES_CACHE_ = GmailApp.getAliases();
+  }
+
+  return RAW_ALIASES_CACHE_;
+}
+
+let OWN_ADDRESSES_CACHE_ = null;
+
+function getOwnAddresses_() {
+  if (!OWN_ADDRESSES_CACHE_) {
+    OWN_ADDRESSES_CACHE_ = getRawAliases_()
+      .concat([
+        CONFIG.SENDER_ALIAS,
+        Session.getEffectiveUser().getEmail()
+      ])
+      .map(function (email) {
+        return String(email || '').toLowerCase();
+      });
+  }
+
+  return OWN_ADDRESSES_CACHE_;
+}
+
 function assertSenderAlias_() {
   const self = Session.getEffectiveUser().getEmail().toLowerCase();
 
   // Compte principal (ex. compte Workspace dédié) : rien à vérifier.
   if (self === CONFIG.SENDER_ALIAS.toLowerCase()) return;
 
-  const aliases = GmailApp.getAliases().map(
+  const aliases = getRawAliases_().map(
     function (email) {
       return email.toLowerCase();
     }
@@ -4036,14 +4073,7 @@ function isAutoResponderMessage_(message) {
 }
 
 function hasExternalReply_(thread) {
-  const own = GmailApp.getAliases()
-    .concat([
-      CONFIG.SENDER_ALIAS,
-      Session.getEffectiveUser().getEmail()
-    ])
-    .map(function (email) {
-      return String(email || '').toLowerCase();
-    });
+  const own = getOwnAddresses_();
 
   return thread.getMessages().some(
     function (message) {
@@ -5184,9 +5214,7 @@ function getReplyAgentPrompt_() {
 
 // Dernier message du fil qui ne vient PAS de nous (donc : le prospect).
 function getLastExternalReply_(thread) {
-  const own = GmailApp.getAliases()
-    .concat([CONFIG.SENDER_ALIAS, Session.getEffectiveUser().getEmail()])
-    .map(function (email) { return String(email || '').toLowerCase(); });
+  const own = getOwnAddresses_();
 
   const messages = thread.getMessages();
 
