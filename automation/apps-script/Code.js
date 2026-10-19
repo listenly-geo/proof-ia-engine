@@ -5941,6 +5941,47 @@ function watchdogRun() {
 function watchdogBody_() {
   checkTriggers_();
   checkCadence_();
+  try {
+    verifierEnvoisGmail_();
+  } catch (error) {
+    logJournal_('watchdog', 'Erreur vérification Gmail', safeError_(error));
+  }
+}
+
+// Lecture seule : pour les lignes en « Erreur — vérifier Gmail » ou « Doublon »,
+// regarde dans le fil Gmail si un mail a bien été envoyé depuis la boîte du
+// moteur, et l'écrit dans « Notes / prochaine action ». Ne modifie ni l'état
+// d'envoi ni aucun brouillon.
+function verifierEnvoisGmail_() {
+  const context = getContext_();
+  const today = Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM');
+  const sender = String(CONFIG.SENDER_ALIAS || '').toLowerCase();
+  let checked = 0;
+
+  for (let i = 0; i < context.rows.length && checked < 40; i++) {
+    const row = context.rows[i];
+    const etat = String(row['État envoi'] || '');
+    if (!/Erreur — vérifier Gmail|Doublon/.test(etat)) continue;
+    if (/Gmail vérifié/.test(String(row['Notes / prochaine action'] || ''))) continue;
+
+    const sheetRow = CONFIG.FIRST_DATA_ROW + i;
+    const thread = row['ID conversation'] ? getThreadSafely_(row['ID conversation']) : null;
+    checked++;
+
+    let note;
+    if (!thread) {
+      note = 'Gmail vérifié le ' + today + ' : fil introuvable';
+    } else {
+      const sent = thread.getMessages().some(function (message) {
+        return String(message.getFrom() || '').toLowerCase().indexOf(sender) !== -1;
+      });
+      note = 'Gmail vérifié le ' + today + (sent ? ' : mail envoyé trouvé dans le fil' : ' : aucun envoi trouvé dans le fil');
+    }
+
+    writeFields_(context, sheetRow, {
+      'Notes / prochaine action': note
+    });
+  }
 }
 
 function checkTriggers_() {
