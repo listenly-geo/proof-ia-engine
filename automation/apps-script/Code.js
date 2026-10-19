@@ -6028,6 +6028,28 @@ function checkTriggers_() {
   logJournal_('déclencheurs', '⚠️ recréés', missing.join(', '));
 }
 
+// Optimisation automatique du rythme : quand le contrôle horaire constate un
+// retard, on augmente MAX_SENDS_PER_RUN de 2 (jamais au-delà de
+// MAX_SENDS_PER_RUN_CEILING, défaut 15). DAILY_LIMIT, MASTER_PAUSE et les
+// règles de sécurité ne sont jamais modifiés ici. Chaque changement est
+// journalisé. L'ajustement Postmaster (rapport quotidien) reste prioritaire
+// et peut ramener la limite vers le bas si la réputation baisse.
+function ajusterRythmeAuto_(sentToday, expectedByNow) {
+  const ceiling = getNumberSetting_('MAX_SENDS_PER_RUN_CEILING', 15);
+  const current = getNumberSetting_('MAX_SENDS_PER_RUN', 5);
+
+  if (current >= ceiling) {
+    logJournal_('optimisation', 'ℹ️ plafond atteint',
+      'MAX_SENDS_PER_RUN=' + current + ' (plafond ' + ceiling + ') — envoyés=' + sentToday + ' attendu≈' + expectedByNow);
+    return;
+  }
+
+  const next = Math.min(ceiling, current + 2);
+  setSetting_('MAX_SENDS_PER_RUN', String(next));
+  logJournal_('optimisation', '✅ auto',
+    'retard : MAX_SENDS_PER_RUN ' + current + ' → ' + next + ' (plafond ' + ceiling + ') — envoyés=' + sentToday + ' attendu≈' + expectedByNow);
+}
+
 function checkCadence_() {
   try {
     const tz = CONFIG.TIME_ZONE;
@@ -6067,6 +6089,7 @@ function checkCadence_() {
       );
 
       try {
+        ajusterRythmeAuto_(sentToday, expectedByNow);
         runMachine_(true);
         logJournal_('rattrapage', '✅ relancé', 'passage forcé exécuté');
       } catch (errorRun) {
