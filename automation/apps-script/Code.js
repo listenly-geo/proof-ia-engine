@@ -6028,6 +6028,22 @@ function checkTriggers_() {
   logJournal_('déclencheurs', '⚠️ recréés', missing.join(', '));
 }
 
+// Détecte un blocage de quota Gmail aujourd'hui : compte les lignes en
+// « Trop d'appels… » dans Erreur envoi. La référence est prise à la première
+// vérification du jour ; toute hausse ensuite = quota atteint aujourd'hui.
+function quotaGmailAtteintAujourdhui_(context, todayKey) {
+  const props = PropertiesService.getScriptProperties();
+  const count = context.rows.filter(function (row) {
+    return /Trop d.appels/i.test(String(row['Erreur envoi'] || ''));
+  }).length;
+  const baseKey = 'QUOTA_ERR_BASE_' + todayKey;
+  if (props.getProperty(baseKey) === null) {
+    props.setProperty(baseKey, String(count));
+  }
+  const base = Number(props.getProperty(baseKey) || 0);
+  return count > base;
+}
+
 // Optimisation automatique du rythme : quand le contrôle horaire constate un
 // retard, on augmente MAX_SENDS_PER_RUN de 2 (jamais au-delà de
 // MAX_SENDS_PER_RUN_CEILING, défaut 15). DAILY_LIMIT, MASTER_PAUSE et les
@@ -6087,6 +6103,12 @@ function checkCadence_() {
         'cadence', '⚠️ retard',
         'envoyés=' + sentToday + ' attendu≈' + expectedByNow
       );
+
+      if (quotaGmailAtteintAujourdhui_(context, todayKey)) {
+        logJournal_('quota Gmail', '⚠️ atteint aujourd’hui',
+          'pas de hausse ni de relance forcée avant demain — envoyés=' + sentToday);
+        return;
+      }
 
       try {
         ajusterRythmeAuto_(sentToday, expectedByNow);
