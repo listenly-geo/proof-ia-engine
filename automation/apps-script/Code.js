@@ -6041,7 +6041,32 @@ function quotaGmailAtteintAujourdhui_(context, todayKey) {
     props.setProperty(baseKey, String(count));
   }
   const base = Number(props.getProperty(baseKey) || 0);
-  return count > base;
+  const blocked = count > base;
+  if (blocked) {
+    props.setProperty('QUOTA_BLOCKED', todayKey);
+  }
+  return blocked;
+}
+
+// Sonde après blocage : si Gmail avait bloqué la veille (ou plus tôt), la
+// première vérification du jour repart prudemment à 3 envois par passage au
+// lieu de l'ancienne limite. Ensuite la hausse normale (+2 par heure, sans
+// nouveau blocage) remonte le rythme. Si Gmail bloque encore, la limite ne
+// monte pas et le blocage est journalisé.
+function sondeGmailApresBlocage_(todayKey) {
+  const props = PropertiesService.getScriptProperties();
+  const lastBlock = props.getProperty('QUOTA_BLOCKED');
+  if (!lastBlock || lastBlock === todayKey) return;
+
+  const probeKey = 'SONDE_' + todayKey;
+  if (props.getProperty(probeKey) !== null) return;
+
+  props.setProperty(probeKey, '1');
+  const before = getNumberSetting_('MAX_SENDS_PER_RUN', 5);
+  const probe = Math.min(3, before);
+  setSetting_('MAX_SENDS_PER_RUN', String(probe));
+  logJournal_('sonde Gmail', 'ℹ️ reprise prudente',
+    'blocage vu le ' + lastBlock + ' : MAX_SENDS_PER_RUN ' + before + ' → ' + probe + ' aujourd’hui pour tester Gmail');
 }
 
 // Optimisation automatique du rythme : quand le contrôle horaire constate un
@@ -6098,13 +6123,16 @@ function checkCadence_() {
     const span = Math.max(1, endHour - startHour);
     const expectedByNow = Math.floor(dailyLimit * elapsed / span);
 
+    const quotaHit = quotaGmailAtteintAujourdhui_(context, todayKey);
+    sondeGmailApresBlocage_(todayKey);
+
     if (sentToday + 5 < expectedByNow) {
       logJournal_(
         'cadence', '⚠️ retard',
         'envoyés=' + sentToday + ' attendu≈' + expectedByNow
       );
 
-      if (quotaGmailAtteintAujourdhui_(context, todayKey)) {
+      if (quotaHit) {
         logJournal_('quota Gmail', '⚠️ atteint aujourd’hui',
           'pas de hausse ni de relance forcée avant demain — envoyés=' + sentToday);
         return;
