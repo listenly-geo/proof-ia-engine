@@ -6211,6 +6211,9 @@ const LICENCING_LUNDI_ = [
 
 function envoyerLicencingLundi_() {
   const ui = SpreadsheetApp.getUi();
+  // Désactivé le 19/10/2026 : les 5 mails sont envoyés à la main par Etienne.
+  SpreadsheetApp.getUi().alert('Désactivé : les propositions licencing sont envoyées à la main.');
+  return;
   const parisParts = Utilities.formatDate(new Date(), 'Europe/Paris', 'u H').split(' ');
   const dayOfWeek = Number(parisParts[0]);
   const hour = Number(parisParts[1]);
