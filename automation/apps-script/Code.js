@@ -5920,6 +5920,18 @@ function copierReponsesRecues_(context) {
   const out = [];
   let read = 0;
 
+  // Historique : on ajoute seulement les réponses pas encore copiées
+  // (clé = conversation + date du message). Rien n'est effacé.
+  const existing = {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 1) {
+    sheet.getRange(1, 1, 1, REPONSES_HEADERS.length).setValues([REPONSES_HEADERS]);
+  } else if (lastRow >= 2) {
+    sheet.getRange(2, 1, lastRow - 1, REPONSES_HEADERS.length).getValues().forEach(function (r) {
+      existing[String(r[7]) + '|' + String(r[1])] = true;
+    });
+  }
+
   context.rows.forEach(function (row) {
     const statut = String(row['Statut prospection'] || '');
     const etat = String(row['État envoi'] || '');
@@ -5938,11 +5950,13 @@ function copierReponsesRecues_(context) {
     if (!fromProspect.length) return;
 
     const last = fromProspect[fromProspect.length - 1];
+    const dateMsg = Utilities.formatDate(last.getDate(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm');
+    if (existing[threadId + '|' + dateMsg]) return;
     const extrait = String(last.getPlainBody() || '').replace(/\s+/g, ' ').trim().slice(0, 400);
 
     out.push([
       now,
-      Utilities.formatDate(last.getDate(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm'),
+      dateMsg,
       row['Nom du SaaS'] || '',
       row['Email public'] || '',
       statut || etat,
@@ -5952,12 +5966,10 @@ function copierReponsesRecues_(context) {
     ]);
   });
 
-  sheet.clear();
-  sheet.getRange(1, 1, 1, REPONSES_HEADERS.length).setValues([REPONSES_HEADERS]);
   if (out.length) {
-    sheet.getRange(2, 1, out.length, REPONSES_HEADERS.length).setValues(out);
+    sheet.getRange(sheet.getLastRow() + 1, 1, out.length, REPONSES_HEADERS.length).setValues(out);
   }
-  logJournal_('réponses', '✅ copiées', out.length + ' réponse(s) dans « ' + REPONSES_SHEET_NAME + ' »');
+  logJournal_('réponses', '✅ copiées', out.length + ' nouvelle(s) réponse(s) ajoutée(s) à l’historique');
 }
 
 function logJournal_(step, result, detail) {
