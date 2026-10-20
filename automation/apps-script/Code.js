@@ -5928,6 +5928,37 @@ function findThreadByEmail_(email) {
   }
 }
 
+// Contrôle de couverture : toutes les conversations entrantes des 7 derniers
+// jours dans la boîte d'envoi doivent être rattachées à une ligne du Sheet.
+// Celles qui ne le sont pas sont journalisées (lecture seule, aucun envoi).
+function auditerBoiteReponses_(context) {
+  const sender = String(CONFIG.SENDER_ALIAS || '').toLowerCase();
+  const knownThreads = {};
+  context.rows.forEach(function (row) {
+    const tid = String(row['ID conversation'] || '');
+    if (tid) knownThreads[tid] = true;
+  });
+
+  const threads = GmailApp.search('in:inbox newer_than:7d -from:' + sender, 0, 60);
+  const unmatched = [];
+
+  threads.forEach(function (thread) {
+    if (knownThreads[thread.getId()]) return;
+    const messages = thread.getMessages();
+    const last = messages[messages.length - 1];
+    const from = String(last.getFrom() || '');
+    if (from.toLowerCase().indexOf(sender) !== -1) return;
+    if (/no-?reply|mailer-daemon|postmaster/i.test(from)) return;
+    unmatched.push(from.replace(/<.*$/, '').trim() + ' — ' + String(last.getSubject() || '').slice(0, 60));
+  });
+
+  if (unmatched.length) {
+    logJournal_('audit boîte', '⚠️ réponses non rattachées', unmatched.length + ' : ' + unmatched.slice(0, 8).join(' | '));
+  } else {
+    logJournal_('audit boîte', '✅ OK', 'toutes les conversations entrantes (7 jours) sont rattachées au Sheet');
+  }
+}
+
 // Copie les réponses reçues (début du message) dans l'onglet « Réponses reçues »
 // pour qu'elles soient lisibles depuis le Sheet, sans accès Gmail supplémentaire.
 // Lecture seule : n'envoie rien, ne modifie ni les états ni les textes de mails.
@@ -6045,7 +6076,9 @@ function watchdogBody_() {
     logJournal_('watchdog', 'Erreur vérification Gmail', safeError_(error));
   }
   try {
-    copierReponsesRecues_(getContext_());
+    const contextReponses = getContext_();
+    copierReponsesRecues_(contextReponses);
+    auditerBoiteReponses_(contextReponses);
   } catch (error) {
     logJournal_('réponses', 'Erreur copie', safeError_(error));
   }
