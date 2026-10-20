@@ -2220,6 +2220,15 @@ function integrationFollowUp2_(row) {
     '\n\n' + buildSignaturePlainText_();
 }
 
+// True si le dernier message du fil n'est pas celui du prospect (donc c'est nous
+// qui avons écrit en dernier).
+function dernierMessageEstDeNous_(thread, recipient) {
+  const msgs = thread.getMessages();
+  if (!msgs.length || !recipient) return false;
+  const from = String(msgs[msgs.length - 1].getFrom() || '').toLowerCase();
+  return from.indexOf(String(recipient).toLowerCase()) === -1;
+}
+
 // Relance les prospects qui ont répondu (positivement ou de façon neutre,
 // mais pas un refus clair) et n'ont toujours pas coché « Voix ajoutée
 // (confirmée) » : un rappel à J+7 depuis leur réponse, puis un dernier à
@@ -2271,6 +2280,10 @@ function processIntegrationReminders_(context) {
     const recipient = String(row['Email public'] || '').trim();
     const sheetRow = CONFIG.FIRST_DATA_ROW + i;
     const thread = getThreadSafely_(row['ID conversation']);
+
+    // Garde-fou (20/10) : si le dernier message du fil vient de nous, la
+    // conversation est déjà répondue : pas de relance par-dessus.
+    if (thread && dernierMessageEstDeNous_(thread, recipient)) continue;
 
     try {
       if (age >= j2 && !row['Relance intégration 2 envoyée']) {
