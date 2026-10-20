@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-10-19-cache-gmail-aliases'
+  CODE_VERSION: '2026-10-20-garde-fou-doublon-lecture-sheet-fraiche'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -1825,6 +1825,23 @@ function processInitialQueue_(context, cap) {
     const duplicate = duplicateReason_(context, i, recipient);
 
     if (duplicate) {
+      // Filet de sécurité (20/10/2026) : context.rows[i] est un instantané pris
+      // au début du passage. Si une exécution qui se chevauche (watchdog de
+      // rattrapage, passage horaire voisin) a, entre-temps, réellement envoyé
+      // ce mail et écrit "Date envoi" dans la feuille, l'instantané en mémoire
+      // ne le sait pas encore et ce bloc rebasculerait à tort la ligne en
+      // "Doublon — non envoyé" (avec À relancer forcé à false), supprimant sa
+      // relance planifiée malgré un envoi réel. On relit donc la VRAIE valeur
+      // de "Date envoi" dans la feuille juste avant d'écrire : si un envoi a
+      // eu lieu dans l'intervalle, on n'y touche plus.
+      const dateEnvoiReelle = context.sheet
+        .getRange(sheetRow, context.map['Date envoi'])
+        .getValue();
+
+      if (dateEnvoiReelle) {
+        continue;
+      }
+
       writeFields_(context, sheetRow, {
         'Envoyer': false,
         'À relancer': false,
@@ -5083,6 +5100,18 @@ function processInitialQueueOpp_(context, cap) {
     const duplicate = duplicateReasonOpp_(context, i, recipient);
 
     if (duplicate) {
+      // Même garde-fou que processInitialQueue_ (20/10/2026) : relit la vraie
+      // valeur de "Date 1er contact" dans la feuille (pas l'instantané en
+      // mémoire) pour ne jamais rebasculer en "Doublon" une ligne qu'une
+      // exécution qui se chevauche aurait, entre-temps, réellement envoyée.
+      const dateContactReelle = context.sheet
+        .getRange(sheetRow, context.map['Date 1er contact'])
+        .getValue();
+
+      if (dateContactReelle) {
+        continue;
+      }
+
       writeFieldsOpp_(context, sheetRow, {
         'Envoyer': false,
         'À relancer': false,
