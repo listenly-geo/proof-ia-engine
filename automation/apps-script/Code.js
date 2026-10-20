@@ -1861,6 +1861,7 @@ function processInitialQueue_(context, cap) {
       );
 
       sent = true;
+      journaliserEnvoi_('Premier mail', row['Nom du SaaS'], recipient, '');
 
       const now = new Date();
 
@@ -2168,6 +2169,38 @@ function sendFollowUp_(thread, recipient, body) {
   );
 
   lastMessage.replyAll(body, options);
+  journaliserEnvoi_('Relance', '', recipient, thread.getId());
+}
+
+// ---------------------------------------------------------------
+// JOURNAL DES ENVOIS (20/10/2026)
+// ---------------------------------------------------------------
+// Une ligne par message sortant réellement parti, dans l'onglet « Journal envois »
+// (lisible par le contrôle santé, sans avoir besoin de Gmail). Ne bloque jamais
+// un envoi : si l'écriture échoue, on passe outre.
+const JOURNAL_ENVOIS_SHEET_NAME = 'Journal envois';
+const JOURNAL_ENVOIS_HEADERS = ['Date', 'Heure', 'Type', 'Nom du SaaS', 'Destinataire', 'ID fil'];
+
+function journaliserEnvoi_(type, saas, recipient, threadId) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sh = ss.getSheetByName(JOURNAL_ENVOIS_SHEET_NAME);
+    if (!sh) {
+      sh = ss.insertSheet(JOURNAL_ENVOIS_SHEET_NAME);
+      sh.getRange(1, 1, 1, JOURNAL_ENVOIS_HEADERS.length).setValues([JOURNAL_ENVOIS_HEADERS]);
+    }
+    const now = new Date();
+    sh.appendRow([
+      Utilities.formatDate(now, CONFIG.TIME_ZONE, 'yyyy-MM-dd'),
+      Utilities.formatDate(now, CONFIG.TIME_ZONE, 'HH:mm:ss'),
+      type,
+      saas || '',
+      recipient || '',
+      threadId || ''
+    ]);
+  } catch (error) {
+    // Le journal ne doit jamais bloquer un envoi.
+  }
 }
 
 // ---------------------------------------------------------------
@@ -2206,6 +2239,7 @@ function sendIntegrationReminder_(thread, recipient, body) {
   );
 
   lastMessage.replyAll(body, options);
+  journaliserEnvoi_('Relance intégration', '', recipient, thread.getId());
 }
 
 function integrationFollowUp1_(row) {
@@ -4999,6 +5033,7 @@ function processInitialQueueOpp_(context, cap) {
 
       GmailApp.sendEmail(recipient, draft.subject, draft.body, options);
       sent = true;
+      journaliserEnvoi_('Opportunité', '', recipient, '');
 
       const now = new Date();
 
@@ -5605,6 +5640,7 @@ function processScheduledReplies_(context) {
       ));
 
       messages[messages.length - 1].replyAll(stripEmoji_(body), options);
+      journaliserEnvoi_('Réponse IA', row['Nom du SaaS'], recipient, thread.getId());
 
       writeFields_(context, sheetRow, {
         'Statut réponse IA': 'Envoyée',
