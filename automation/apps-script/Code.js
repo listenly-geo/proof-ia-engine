@@ -2234,6 +2234,16 @@ function journaliserEnvoi_(type, saas, recipient, threadId) {
 // - doublon : un envoi déjà parti à ce destinataire dans les 24 h (si dedupe)
 // Une rafale ou un doublon mettent aussi MASTER_PAUSE à TRUE : c'est une anomalie.
 function controleAvantEnvoi_(recipient, type, dedupe) {
+  // Quota Gmail réel (20/10) : Google indique combien d'envois il reste aujourd'hui.
+  // Si le quota est presque épuisé, on n'envoie plus rien (pas de pause : on reprend le lendemain).
+  const quotaRestant = MailApp.getRemainingDailyQuota();
+  if (quotaRestant < 100) {
+    logJournal_('quota', 'ℹ️ quota Gmail bas', 'restant=' + quotaRestant + ' (seuil 100) — ' + type);
+  }
+  if (quotaRestant < 20) {
+    return 'quota Gmail épuisé pour aujourd\'hui (restant ' + quotaRestant + ')';
+  }
+
   const parisParts = Utilities.formatDate(new Date(), 'Europe/Paris', 'u H').split(' ');
   const dayOfWeek = Number(parisParts[0]);
   const hour = Number(parisParts[1]);
