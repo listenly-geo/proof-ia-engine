@@ -2237,6 +2237,8 @@ function controleAvantEnvoi_(recipient, type, dedupe) {
   // Quota Gmail réel (20/10) : Google indique combien d'envois il reste aujourd'hui.
   // Si le quota est presque épuisé, on n'envoie plus rien (pas de pause : on reprend le lendemain).
   const quotaRestant = MailApp.getRemainingDailyQuota();
+  setSetting_('QUOTA_GMAIL_RESTANT', quotaRestant + ' (lu à ' +
+    Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'HH:mm') + ')');
   if (quotaRestant < 100) {
     logJournal_('quota', 'ℹ️ quota Gmail bas', 'restant=' + quotaRestant + ' (seuil 100) — ' + type);
   }
@@ -6254,6 +6256,14 @@ function watchdogRun() {
 }
 
 function watchdogBody_() {
+  // Quota Gmail restant, visible à chaque passage horaire dans Réglages (QUOTA_GMAIL_RESTANT),
+  // même quand les envois sont en pause.
+  try {
+    setSetting_('QUOTA_GMAIL_RESTANT', MailApp.getRemainingDailyQuota() + ' (lu à ' +
+      Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'HH:mm') + ')');
+  } catch (error) {
+    // Lecture du quota impossible : on continue le passage.
+  }
   checkTriggers_();
   checkCadence_();
   try {
