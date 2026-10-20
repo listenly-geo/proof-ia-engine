@@ -5901,6 +5901,65 @@ function getJournalSheet_() {
   return sheet;
 }
 
+// Copie les réponses reçues (début du message) dans l'onglet « Réponses reçues »
+// pour qu'elles soient lisibles depuis le Sheet, sans accès Gmail supplémentaire.
+// Lecture seule : n'envoie rien, ne modifie ni les états ni les textes de mails.
+const REPONSES_SHEET_NAME = 'Réponses reçues';
+const REPONSES_HEADERS = [
+  'Date copie', 'Date du message', 'Nom du SaaS', 'Email public',
+  'Statut', 'Classification IA', 'Extrait du message', 'ID conversation'
+];
+
+function copierReponsesRecues_(context) {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(REPONSES_SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(REPONSES_SHEET_NAME);
+
+  const sender = String(CONFIG.SENDER_ALIAS || '').toLowerCase();
+  const now = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm');
+  const out = [];
+  let read = 0;
+
+  context.rows.forEach(function (row) {
+    const statut = String(row['Statut prospection'] || '');
+    const etat = String(row['État envoi'] || '');
+    const threadId = String(row['ID conversation'] || '');
+    if (!threadId) return;
+    if (statut.indexOf('Réponse') === -1 && etat.indexOf('Réponse') === -1) return;
+    if (read >= 60) return;
+
+    read++;
+    const thread = getThreadSafely_(threadId);
+    if (!thread) return;
+
+    const fromProspect = thread.getMessages().filter(function (message) {
+      return String(message.getFrom() || '').toLowerCase().indexOf(sender) === -1;
+    });
+    if (!fromProspect.length) return;
+
+    const last = fromProspect[fromProspect.length - 1];
+    const extrait = String(last.getPlainBody() || '').replace(/\s+/g, ' ').trim().slice(0, 400);
+
+    out.push([
+      now,
+      Utilities.formatDate(last.getDate(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm'),
+      row['Nom du SaaS'] || '',
+      row['Email public'] || '',
+      statut || etat,
+      row['Classification réponse IA'] || '',
+      extrait,
+      threadId
+    ]);
+  });
+
+  sheet.clear();
+  sheet.getRange(1, 1, 1, REPONSES_HEADERS.length).setValues([REPONSES_HEADERS]);
+  if (out.length) {
+    sheet.getRange(2, 1, out.length, REPONSES_HEADERS.length).setValues(out);
+  }
+  logJournal_('réponses', '✅ copiées', out.length + ' réponse(s) dans « ' + REPONSES_SHEET_NAME + ' »');
+}
+
 function logJournal_(step, result, detail) {
   try {
     const sheet = getJournalSheet_();
@@ -5945,6 +6004,11 @@ function watchdogBody_() {
     verifierEnvoisGmail_();
   } catch (error) {
     logJournal_('watchdog', 'Erreur vérification Gmail', safeError_(error));
+  }
+  try {
+    copierReponsesRecues_(getContext_());
+  } catch (error) {
+    logJournal_('réponses', 'Erreur copie', safeError_(error));
   }
 }
 
