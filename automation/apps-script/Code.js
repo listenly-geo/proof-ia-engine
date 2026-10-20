@@ -2220,13 +2220,15 @@ function integrationFollowUp2_(row) {
     '\n\n' + buildSignaturePlainText_();
 }
 
-// True si le dernier message du fil n'est pas celui du prospect (donc c'est nous
-// qui avons écrit en dernier).
-function dernierMessageEstDeNous_(thread, recipient) {
+// Si le dernier message du fil vient de nous (et pas du prospect), renvoie le
+// nombre de jours écoulés depuis ce message. Sinon renvoie null.
+function joursDepuisNotreDernierMessage_(thread, recipient) {
   const msgs = thread.getMessages();
-  if (!msgs.length || !recipient) return false;
-  const from = String(msgs[msgs.length - 1].getFrom() || '').toLowerCase();
-  return from.indexOf(String(recipient).toLowerCase()) === -1;
+  if (!msgs.length || !recipient) return null;
+  const last = msgs[msgs.length - 1];
+  const from = String(last.getFrom() || '').toLowerCase();
+  if (from.indexOf(String(recipient).toLowerCase()) !== -1) return null;
+  return daysBetween_(last.getDate(), new Date());
 }
 
 // Relance les prospects qui ont répondu (positivement ou de façon neutre,
@@ -2281,9 +2283,10 @@ function processIntegrationReminders_(context) {
     const sheetRow = CONFIG.FIRST_DATA_ROW + i;
     const thread = getThreadSafely_(row['ID conversation']);
 
-    // Garde-fou (20/10) : si le dernier message du fil vient de nous, la
-    // conversation est déjà répondue : pas de relance par-dessus.
-    if (thread && dernierMessageEstDeNous_(thread, recipient)) continue;
+    // Garde-fou (20/10) : une relance ne part jamais moins de j1 jours après
+    // NOTRE dernier message dans le fil (pas de relance juste après une réponse).
+    const joursDepuisNous = thread ? joursDepuisNotreDernierMessage_(thread, recipient) : null;
+    if (joursDepuisNous !== null && joursDepuisNous < j1) continue;
 
     try {
       if (age >= j2 && !row['Relance intégration 2 envoyée']) {
