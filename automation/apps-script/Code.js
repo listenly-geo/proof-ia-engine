@@ -2371,6 +2371,12 @@ function processIntegrationReminders_(context) {
     // Refus clair détecté par l'IA : on ne relance pas quelqu'un qui a dit non.
     if (/reject/i.test(String(row['Classification réponse IA'] || ''))) continue;
 
+    // 20/10 : relance d'intégration UNIQUEMENT si le SaaS a accepté l'intégration
+    // (classification A ou F) ET que nous lui avons déjà envoyé l'ID (statut « Envoyée »).
+    // Ces relances ne concernent jamais les prospects sans réponse (relance classique).
+    if (!/DIRECT_INTEGRATION|TECHNICAL_INTEGRATION/i.test(String(row['Classification réponse IA'] || ''))) continue;
+    if (!/Envoyée/i.test(String(row['Statut réponse IA'] || ''))) continue;
+
     // Une réponse de l'IA est déjà programmée ou en attente de validation
     // pour ce fil : pas besoin d'un rappel automatique en plus en même temps.
     if (/programmée|à valider/i.test(String(row['Statut réponse IA'] || ''))) continue;
