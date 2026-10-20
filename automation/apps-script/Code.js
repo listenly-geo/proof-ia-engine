@@ -1851,6 +1851,9 @@ function processInitialQueue_(context, cap) {
       // confondus (voir waitForSendSlot_). Posé AVANT l'envoi (et non plus
       // après) pour que ça reste vrai même si le watchdog force un passage
       // de rattrapage juste après celui-ci.
+      const refusPremier = controleAvantEnvoi_(recipient, 'Premier mail', true);
+      if (refusPremier) throw new Error(refusPremier);
+
       waitForSendSlot_();
 
       GmailApp.sendEmail(
@@ -2135,6 +2138,9 @@ function sendFollowUp_(thread, recipient, body) {
     throw new Error('Adresse de relance invalide.');
   }
 
+  const refusRelance = controleAvantEnvoi_(recipient, 'Relance', true);
+  if (refusRelance) throw new Error(refusRelance);
+
   if (!thread) {
     throw new Error(
       'Conversation introuvable : relance bloquée ' +
@@ -2179,7 +2185,7 @@ function sendFollowUp_(thread, recipient, body) {
 // (lisible par le contrôle santé, sans avoir besoin de Gmail). Ne bloque jamais
 // un envoi : si l'écriture échoue, on passe outre.
 const JOURNAL_ENVOIS_SHEET_NAME = 'Journal envois';
-const JOURNAL_ENVOIS_HEADERS = ['Date', 'Heure', 'Type', 'Nom du SaaS', 'Destinataire', 'ID fil'];
+const JOURNAL_ENVOIS_HEADERS = ['Date', 'Heure', 'Type', 'Nom du SaaS', 'Destinataire', 'ID fil', 'Horodatage'];
 
 function journaliserEnvoi_(type, saas, recipient, threadId) {
   try {
@@ -2196,11 +2202,68 @@ function journaliserEnvoi_(type, saas, recipient, threadId) {
       type,
       saas || '',
       recipient || '',
-      threadId || ''
+      threadId || '',
+      now.getTime()
     ]);
   } catch (error) {
     // Le journal ne doit jamais bloquer un envoi.
   }
+}
+
+// Garde-fou AVANT chaque envoi (20/10/2026). Renvoie null si l'envoi est permis,
+// sinon le motif du refus (l'envoi est alors annulé par l'appelant).
+// - hors plage : hors 8h-19h Paris ou week-end
+// - rafale : 3 envois déjà partis dans les 5 dernières minutes
+// - doublon : un envoi déjà parti à ce destinataire dans les 24 h (si dedupe)
+// Une rafale ou un doublon mettent aussi MASTER_PAUSE à TRUE : c'est une anomalie.
+function controleAvantEnvoi_(recipient, type, dedupe) {
+  const parisParts = Utilities.formatDate(new Date(), 'Europe/Paris', 'u H').split(' ');
+  const dayOfWeek = Number(parisParts[0]);
+  const hour = Number(parisParts[1]);
+  if (dayOfWeek > 5 || hour < 8 || hour >= 19) {
+    return 'hors plage d\'envoi (8h-19h Paris, jours ouvrés) : ' + type;
+  }
+
+  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(JOURNAL_ENVOIS_SHEET_NAME);
+  if (!sh || sh.getLastRow() < 2) return null;
+
+  const now = Date.now();
+  const today = Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyy-MM-dd');
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 7).getValues();
+  let recent = 0;
+  let aujourdhui = 0;
+  let doublon = false;
+  values.forEach(function (r) {
+    const ts = Number(r[6]);
+    if (!ts) return;
+    if (now - ts < 5 * 60000) recent++;
+    if (String(r[2]) !== 'Réponse IA' && Utilities.formatDate(new Date(ts), 'Europe/Paris', 'yyyy-MM-dd') === today) {
+      aujourdhui++;
+    }
+    if (dedupe && now - ts < 24 * 3600000 &&
+        String(r[4]).toLowerCase() === String(recipient).toLowerCase()) {
+      doublon = true;
+    }
+  });
+
+  // Plafond quotidien (hors réponses IA) : jamais plus que DAILY_LIMIT par jour.
+  if (type !== 'Réponse IA' && aujourdhui >= getNumberSetting_('DAILY_LIMIT', 50)) {
+    return 'plafond quotidien atteint : envois du jour déjà au maximum';
+  }
+
+  // Rafale : plus d'un passage complet (MAX_SENDS_PER_RUN_CEILING) en 5 minutes
+  // = deux passages qui se chevauchent : anomalie.
+  if (recent >= getNumberSetting_('MAX_SENDS_PER_RUN_CEILING', 13)) {
+    setSetting_('MASTER_PAUSE', 'TRUE');
+    logJournal_('sécurité', '⛔ rafale détectée : pause automatique', type);
+    return 'rafale : passage en double détecté (trop d\'envois en 5 minutes)';
+  }
+  if (doublon) {
+    setSetting_('MASTER_PAUSE', 'TRUE');
+    logJournal_('sécurité', '⛔ doublon détecté : pause automatique', recipient);
+    return 'doublon : envoi déjà parti à ce destinataire dans les 24 h';
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------
@@ -2218,6 +2281,9 @@ function sendIntegrationReminder_(thread, recipient, body) {
   if (!isValidEmail_(recipient)) {
     throw new Error('Adresse de relance intégration invalide.');
   }
+
+  const refusIntegration = controleAvantEnvoi_(recipient, 'Relance intégration', true);
+  if (refusIntegration) throw new Error(refusIntegration);
 
   if (!thread) {
     throw new Error('Conversation introuvable : relance intégration bloquée.');
@@ -5029,6 +5095,9 @@ function processInitialQueueOpp_(context, cap) {
       writeFieldsOpp_(context, sheetRow, { 'Envoyer': false });
       SpreadsheetApp.flush();
 
+      const refusOpp = controleAvantEnvoi_(recipient, 'Opportunité', true);
+      if (refusOpp) throw new Error(refusOpp);
+
       waitForSendSlot_();
 
       GmailApp.sendEmail(recipient, draft.subject, draft.body, options);
@@ -5638,6 +5707,9 @@ function processScheduledReplies_(context) {
         formatBodyHtml_(body) +
         '</div>'
       ));
+
+      const refusReponse = controleAvantEnvoi_(recipient, 'Réponse IA', false);
+      if (refusReponse) throw new Error(refusReponse);
 
       messages[messages.length - 1].replyAll(stripEmoji_(body), options);
       journaliserEnvoi_('Réponse IA', row['Nom du SaaS'], recipient, thread.getId());
