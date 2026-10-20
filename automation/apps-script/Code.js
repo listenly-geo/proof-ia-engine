@@ -5333,7 +5333,19 @@ function processReplyAgentQueue_(context) {
     if (!row['ID conversation']) continue;
 
     const sheetRow = CONFIG.FIRST_DATA_ROW + i;
-    const thread = getThreadSafely_(row['ID conversation']);
+    let thread = getThreadSafely_(row['ID conversation']);
+
+    // Repli (20/10/2026) : si l'identifiant de conversation est introuvable
+    // (fil ouvert depuis une ancienne boîte), on retrouve le fil par l'adresse
+    // du prospect dans la boîte d'envoi, puis on enregistre le bon identifiant.
+    if (!thread) {
+      const found = findThreadByEmail_(row['Email public']);
+      if (found) {
+        thread = found;
+        writeFields_(context, sheetRow, { 'ID conversation': found.getId() });
+        logJournal_('réponses', 'ℹ️ fil retrouvé', String(row['Nom du SaaS'] || '') + ' : identifiant de conversation corrigé');
+      }
+    }
 
     if (!thread) continue;
 
@@ -5899,6 +5911,21 @@ function getJournalSheet_() {
   }
 
   return sheet;
+}
+
+// Retrouve le fil Gmail d'un prospect par son adresse (repli quand l'identifiant
+// de conversation enregistré n'existe plus dans la boîte d'envoi). Lecture seule.
+function findThreadByEmail_(email) {
+  const address = String(email || '').trim().toLowerCase();
+  if (!address || address.indexOf('@') === -1) return null;
+  try {
+    const threads = GmailApp.search(
+      '(from:' + address + ' OR to:' + address + ') -in:drafts', 0, 1
+    );
+    return threads && threads.length ? threads[0] : null;
+  } catch (error) {
+    return null;
+  }
 }
 
 // Copie les réponses reçues (début du message) dans l'onglet « Réponses reçues »
