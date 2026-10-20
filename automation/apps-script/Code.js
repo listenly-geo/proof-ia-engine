@@ -5451,11 +5451,25 @@ function processReplyAgentQueue_(context) {
     }
 
     if (!body) {
+      // Filet anti-blocage (20/10/2026) : une réponse vide de l'IA est un
+      // aléa du modèle, pas une décision définitive. Si on marque tout de
+      // suite « Dernier message IA (ID) », la conversation est considérée
+      // comme traitée pour toujours (ligne 5361) et ne sera plus jamais
+      // retentée, même si le prospect n'a pas eu de réponse. On retente
+      // donc automatiquement au prochain passage, jusqu'à 3 fois, avant
+      // d'abandonner et de demander une intervention manuelle.
+      const emptyRetryKey = 'EMPTY_RETRY_' + String(row['ID conversation']) + '_' + String(reply.id || '');
+      const emptyRetries = Number(PropertiesService.getScriptProperties().getProperty(emptyRetryKey) || 0) + 1;
+      const maxEmptyRetries = 3;
+      PropertiesService.getScriptProperties().setProperty(emptyRetryKey, String(emptyRetries));
+
+      const giveUp = emptyRetries >= maxEmptyRetries;
       writeFields_(context, sheetRow, Object.assign({
         'Classification réponse IA': String(result.classification || ''),
-        'Statut réponse IA': 'Erreur IA : réponse vide',
-        'Dernier message IA (ID)': String(reply.id || '')
-      }, confirmationFields));
+        'Statut réponse IA': giveUp
+          ? 'Erreur IA : réponse vide après ' + maxEmptyRetries + ' tentatives — à traiter à la main'
+          : 'Erreur IA : réponse vide (nouvelle tentative au prochain passage, ' + emptyRetries + '/' + maxEmptyRetries + ')'
+      }, giveUp ? { 'Dernier message IA (ID)': String(reply.id || '') } : {}, confirmationFields));
       continue;
     }
 
