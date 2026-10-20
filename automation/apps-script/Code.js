@@ -5458,6 +5458,9 @@ function processReplyAgentQueue_(context) {
 
     if (!row['ID conversation']) continue;
 
+    // 20/10 : conversation clôturée à la main (« Clôturée… ») : aucune réponse automatique.
+    if (/clôturée/i.test(String(row['Statut réponse IA'] || ''))) continue;
+
     const sheetRow = CONFIG.FIRST_DATA_ROW + i;
     let thread = getThreadSafely_(row['ID conversation']);
 
