@@ -6308,38 +6308,54 @@ function majSuiviOui_(context) {
 
   sh.clear();
   sh.getRange(1, 1, 300, 7).breakApart();
-  sh.getRange(1, 1).setValue('EN NÉGOCIATION : ' + (envoye.length + aValider.length) +
-    ' SaaS disent oui · ' + envoye.length + ' ID envoyé(s) · ' + aValider.length + ' à valider par Etienne');
-  sh.getRange(2, 1).setValue('Mis à jour automatiquement chaque heure. Aucun envoi ne part sans votre validation.');
-  sh.getRange(1, 1, 1, 7).merge().setFontSize(14).setFontWeight('bold').setBackground('#1f3a5f').setFontColor('#ffffff');
-  sh.getRange(2, 1, 1, 7).merge().setFontStyle('italic').setFontColor('#555555');
+  const NAVY = '#14213d', JAUNE = '#ffd54f', TEAL = '#0e6e7e', ENTETE = '#dce8f2';
+  const VERT = '#e3f4e8', ORANGE = '#fde9d4', ROUGE = '#b34700';
 
-  let r = 4;
-  sh.getRange(r, 1).setValue('ID ENVOYÉ : en attente de l\'ajout de la voix (' + envoye.length + ')')
-    .setFontWeight('bold').setFontColor('#1e6b2e');
-  r++;
-  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setFontWeight('bold').setBackground('#dbe6f3');
+  sh.getRange(1, 1).setValue('EN NÉGOCIATION — SaaS qui disent oui');
+  sh.getRange(2, 1).setValue(
+    (envoye.length + aValider.length) + ' SaaS disent oui   ·   ' + envoye.length + ' ID envoyé(s)   ·   ' +
+    aValider.length + ' à valider par vous');
+  sh.getRange(3, 1).setValue('Mis à jour automatiquement chaque heure. Aucun envoi ne part sans votre validation.');
+  sh.getRange(1, 1, 1, 7).merge().setBackground(NAVY).setFontColor('#ffffff').setFontWeight('bold')
+    .setFontSize(18).setHorizontalAlignment('center');
+  sh.getRange(2, 1, 1, 7).merge().setBackground(JAUNE).setFontColor(NAVY).setFontWeight('bold')
+    .setFontSize(15).setHorizontalAlignment('center');
+  sh.getRange(3, 1, 1, 7).merge().setBackground('#f5f5f5').setFontColor('#555555').setFontStyle('italic')
+    .setFontSize(10).setHorizontalAlignment('center');
+
+  sh.getRange(4, 1).setValue('✅ ID ENVOYÉ : en attente de l\'ajout de la voix (' + envoye.length + ')');
+  sh.getRange(4, 1, 1, 7).merge().setBackground(TEAL).setFontColor('#ffffff').setFontWeight('bold')
+    .setFontSize(13).setHorizontalAlignment('left');
+  let r = 5;
+  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
+    .setFontColor(NAVY).setFontSize(10);
   r++;
   if (envoye.length) {
-    sh.getRange(r, 1, envoye.length, 7).setValues(envoye).setBackground('#eef7ee');
+    sh.getRange(r, 1, envoye.length, 7).setValues(envoye).setBackground(VERT).setFontWeight('bold')
+      .setFontColor('#14532d').setFontSize(11);
     r += envoye.length;
   } else {
     sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
     r++;
   }
 
-  r += 2;
-  sh.getRange(r, 1).setValue('À VALIDER PAR ETIENNE : ID pas encore parti (' + aValider.length + ')')
-    .setFontWeight('bold').setFontColor('#9a3412');
   r++;
-  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setFontWeight('bold').setBackground('#dbe6f3');
+  sh.getRange(r, 1, 1, 7).merge().setValue('⏳ À VALIDER PAR ETIENNE : ID pas encore parti (' + aValider.length + ')')
+    .setBackground(ROUGE).setFontColor('#ffffff').setFontWeight('bold').setFontSize(13).setHorizontalAlignment('left');
+  r++;
+  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
+    .setFontColor(NAVY).setFontSize(10);
   r++;
   if (aValider.length) {
-    sh.getRange(r, 1, aValider.length, 7).setValues(aValider).setBackground('#fdf3e7');
+    sh.getRange(r, 1, aValider.length, 7).setValues(aValider).setBackground(ORANGE).setFontSize(10)
+      .setFontColor('#1a1a1a');
   }
 
-  const widths = [200, 220, 170, 120, 90, 260, 300];
+  const widths = [200, 220, 200, 120, 90, 300, 320];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  sh.setRowHeight(1, 52);
+  sh.setRowHeight(2, 44);
+  sh.setRowHeight(4, 36);
   sh.getRange(1, 1, r + aValider.length, 7).setWrap(true).setVerticalAlignment('middle');
 }
 
