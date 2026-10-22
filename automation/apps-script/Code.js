@@ -6278,7 +6278,7 @@ function majSuiviOui_(context) {
   context.rows.forEach(function (row) {
     const cls = String(row['Classification réponse IA'] || '');
     if (!row['Nom du SaaS'] || row['Voix ajoutée (confirmée)'] === true) return;
-    if (!/INTEGRATION|PARTNERSHIP|PROPOSAL/i.test(cls)) return;
+    if (!/^\s*(A|B|F|G)\b|INTEGRATION|PARTNERSHIP|PROPOSAL/i.test(cls)) return;
     if (/reject|refus/i.test(cls)) return;
 
     const statut = String(row['Statut réponse IA'] || '');
