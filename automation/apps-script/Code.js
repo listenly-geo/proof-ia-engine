@@ -6255,60 +6255,87 @@ function watchdogRun() {
   }
 }
 
-// Suivi des SaaS qui ont dit OUI (22/10/2026) : onglet « Suivi oui », reconstruit à chaque
-// passage horaire à partir de Prospection. Lecture seule côté envois : ne touche à aucun mail.
-const SUIVI_OUI_SHEET_NAME = 'Suivi oui';
-const SUIVI_OUI_HEADERS = [
-  'Priorité', 'Nom du SaaS', 'Email', 'Classification IA', 'Dernière réponse', 'Statut réponse IA',
-  'Voix ajoutée (confirmée)', 'Relance intégration 1 envoyée', 'Relance intégration 2 envoyée', 'Action à faire'
+// EN COURS DE NÉGOCIATION (22/10/2026) : SaaS qui ont répondu positivement ET à qui l'ID de
+// Corentin a été envoyé dans un mail effectivement parti (statut « Envoyée » + ID dans le texte).
+// Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
+const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
+const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
+const NEGO_HEADERS = [
+  'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'Voix ajoutée', 'Action à faire'
 ];
 
 function majSuiviOui_(context) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sh = ss.getSheetByName(SUIVI_OUI_SHEET_NAME);
-  if (!sh) sh = ss.insertSheet(SUIVI_OUI_SHEET_NAME);
+  const ancien = ss.getSheetByName('Suivi oui');
+  if (ancien) ss.deleteSheet(ancien);
+  let sh = ss.getSheetByName(NEGO_SHEET_NAME);
+  if (!sh) sh = ss.insertSheet(NEGO_SHEET_NAME);
 
-  const lignes = [];
+  const enCours = [];
+  const idPretNonEnvoye = [];
   context.rows.forEach(function (row) {
     const cls = String(row['Classification réponse IA'] || '');
-    if (!/DIRECT_INTEGRATION|TECHNICAL_INTEGRATION|COMMERCIAL_PARTNERSHIP/i.test(cls)) return;
-    if (!row['Nom du SaaS']) return;
+    if (!row['Nom du SaaS'] || row['Voix ajoutée (confirmée)'] === true) return;
+    if (!/INTEGRATION|PARTNERSHIP|PROPOSAL/i.test(cls)) return;
+    if (/reject|refus/i.test(cls)) return;
 
-    const voixAjoutee = row['Voix ajoutée (confirmée)'] === true;
-    const integration = /DIRECT_INTEGRATION|TECHNICAL_INTEGRATION/i.test(cls);
-    const idEnvoye = /Envoyée/i.test(String(row['Statut réponse IA'] || ''));
+    const statut = String(row['Statut réponse IA'] || '');
+    const brouillon = String(row['Brouillon réponse IA'] || '');
+    const idDansTexte = brouillon.indexOf(VOICE_ID_CORENTIN) !== -1;
+    if (!idDansTexte) return;
 
-    // 1 = ID envoyé à un SaaS qui intègre, voix pas encore ajoutée (la priorité absolue)
-    // 2 = partenariat ou intégration en discussion, pas encore d'ID
-    // 3 = voix ajoutée
-    let priorite, action;
-    if (voixAjoutee) { priorite = 3; action = 'Terminé : voix ajoutée'; }
-    else if (integration && idEnvoye) { priorite = 1; action = 'ID envoyé : attendre ajout de la voix'; }
-    else if (integration) { priorite = 2; action = 'Intégration acceptée : envoyer l\'ID'; }
-    else { priorite = 2; action = 'Discussion partenariat : à traiter à la main'; }
-
-    lignes.push([
-      priorite,
+    const ligne = [
       String(row['Nom du SaaS']),
       String(row['Email public'] || ''),
       cls,
       row['Dernière réponse'] ? String(row['Dernière réponse']) : '',
-      String(row['Statut réponse IA'] || ''),
-      voixAjoutee ? 'Oui' : 'Non',
-      row['Relance intégration 1 envoyée'] ? 'Oui' : 'Non',
-      row['Relance intégration 2 envoyée'] ? 'Oui' : 'Non',
-      action
-    ]);
+      'Non',
+      ''
+    ];
+    if (/^Envoyée/i.test(statut)) {
+      ligne[5] = 'ID envoyé : attendre l\'ajout de la voix';
+      enCours.push(ligne);
+    } else {
+      ligne[5] = 'ID rédigé mais PAS parti (' + (statut.substring(0, 60) || 'statut vide') + ') : à traiter';
+      idPretNonEnvoye.push(ligne);
+    }
   });
 
-  // Tri : priorité 1 (ID envoyé, voix à ajouter) en haut
-  lignes.sort(function (a, b) { return a[0] - b[0]; });
+  sh.clear();
+  sh.getRange(1, 1, 300, 6).breakApart();
+  sh.getRange(1, 1).setValue('EN COURS DE NÉGOCIATION : ' + enCours.length + ' SaaS avec l\'ID envoyé et voix pas encore ajoutée');
+  sh.getRange(2, 1).setValue('Mis à jour automatiquement chaque heure · ' +
+    idPretNonEnvoye.length + ' autres SaaS ont un ID rédigé mais non parti (voir en bas)');
+  sh.getRange(1, 1, 1, 6).merge().setFontSize(14).setFontWeight('bold').setBackground('#1f3a5f').setFontColor('#ffffff');
+  sh.getRange(2, 1, 1, 6).merge().setFontStyle('italic').setFontColor('#555555');
 
-  sh.clearContents();
-  sh.getRange(1, 1, 1, SUIVI_OUI_HEADERS.length).setValues([SUIVI_OUI_HEADERS]);
-  if (lignes.length) {
-    sh.getRange(2, 1, lignes.length, SUIVI_OUI_HEADERS.length).setValues(lignes);
+  let r = 4;
+  sh.getRange(r, 1, 1, 6).setValues([NEGO_HEADERS])
+    .setFontWeight('bold').setBackground('#dbe6f3');
+  r++;
+  if (enCours.length) {
+    sh.getRange(r, 1, enCours.length, 6).setValues(enCours).setBackground('#eef7ee');
+    r += enCours.length;
+  } else {
+    sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
+    r++;
   }
+
+  r += 2;
+  sh.getRange(r, 1).setValue('ID RÉDIGÉ MAIS PAS ENVOYÉ : à relancer après validation').setFontWeight('bold').setFontColor('#9a3412');
+  r++;
+  if (idPretNonEnvoye.length) {
+    sh.getRange(r, 1, idPretNonEnvoye.length, 6).setValues(idPretNonEnvoye).setBackground('#fdf3e7');
+  }
+
+  sh.setColumnWidths(1, 1, 200);
+  sh.setColumnWidths(2, 1, 220);
+  sh.setColumnWidths(3, 1, 170);
+  sh.setColumnWidths(4, 1, 120);
+  sh.setColumnWidths(5, 1, 100);
+  sh.setColumnWidths(6, 1, 380);
+  sh.getRange(1, 1, r + idPretNonEnvoye.length, 6).setWrap(true).setVerticalAlignment('middle');
+  sh.setFrozenRows(4);
 }
 
 function watchdogBody_() {
