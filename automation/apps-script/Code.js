@@ -6259,7 +6259,7 @@ function watchdogRun() {
 // passage horaire à partir de Prospection. Lecture seule côté envois : ne touche à aucun mail.
 const SUIVI_OUI_SHEET_NAME = 'Suivi oui';
 const SUIVI_OUI_HEADERS = [
-  'Nom du SaaS', 'Email', 'Classification IA', 'Dernière réponse', 'Statut réponse IA',
+  'Priorité', 'Nom du SaaS', 'Email', 'Classification IA', 'Dernière réponse', 'Statut réponse IA',
   'Voix ajoutée (confirmée)', 'Relance intégration 1 envoyée', 'Relance intégration 2 envoyée', 'Action à faire'
 ];
 
@@ -6275,12 +6275,20 @@ function majSuiviOui_(context) {
     if (!row['Nom du SaaS']) return;
 
     const voixAjoutee = row['Voix ajoutée (confirmée)'] === true;
-    let action;
-    if (voixAjoutee) action = 'Terminé : voix ajoutée';
-    else if (/DIRECT_INTEGRATION|TECHNICAL_INTEGRATION/i.test(cls)) action = 'Attendre confirmation d\'intégration';
-    else action = 'Discussion partenariat : à traiter à la main';
+    const integration = /DIRECT_INTEGRATION|TECHNICAL_INTEGRATION/i.test(cls);
+    const idEnvoye = /Envoyée/i.test(String(row['Statut réponse IA'] || ''));
+
+    // 1 = ID envoyé à un SaaS qui intègre, voix pas encore ajoutée (la priorité absolue)
+    // 2 = partenariat ou intégration en discussion, pas encore d'ID
+    // 3 = voix ajoutée
+    let priorite, action;
+    if (voixAjoutee) { priorite = 3; action = 'Terminé : voix ajoutée'; }
+    else if (integration && idEnvoye) { priorite = 1; action = 'ID envoyé : attendre ajout de la voix'; }
+    else if (integration) { priorite = 2; action = 'Intégration acceptée : envoyer l\'ID'; }
+    else { priorite = 2; action = 'Discussion partenariat : à traiter à la main'; }
 
     lignes.push([
+      priorite,
       String(row['Nom du SaaS']),
       String(row['Email public'] || ''),
       cls,
@@ -6292,6 +6300,9 @@ function majSuiviOui_(context) {
       action
     ]);
   });
+
+  // Tri : priorité 1 (ID envoyé, voix à ajouter) en haut
+  lignes.sort(function (a, b) { return a[0] - b[0]; });
 
   sh.clearContents();
   sh.getRange(1, 1, 1, SUIVI_OUI_HEADERS.length).setValues([SUIVI_OUI_HEADERS]);
