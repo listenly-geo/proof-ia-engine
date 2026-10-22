@@ -6293,10 +6293,10 @@ function majSuiviOui_(context) {
 
     const lienGmail = threadId
       ? '=HYPERLINK("https://mail.google.com/mail/u/0/?authuser=' + encodeURIComponent(CONFIG.SENDER_ALIAS) +
-        '#all/' + threadId + '","Ouvrir la conversation")'
+        '#all/' + threadId + '";"Ouvrir la conversation")'
       : '—';
     const lienBrouillon = '=HYPERLINK("https://docs.google.com/spreadsheets/d/' + CONFIG.SPREADSHEET_ID +
-      '/edit#gid=' + gidProspection + '&range=AN' + ligneSheet + '","Voir le brouillon")';
+      '/edit#gid=' + gidProspection + '&range=AN' + ligneSheet + '";"Voir le brouillon")';
 
     const ligne = [
       String(row['Nom du SaaS']),
