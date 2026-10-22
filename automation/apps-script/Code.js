@@ -6255,6 +6255,51 @@ function watchdogRun() {
   }
 }
 
+// Suivi des SaaS qui ont dit OUI (22/10/2026) : onglet « Suivi oui », reconstruit à chaque
+// passage horaire à partir de Prospection. Lecture seule côté envois : ne touche à aucun mail.
+const SUIVI_OUI_SHEET_NAME = 'Suivi oui';
+const SUIVI_OUI_HEADERS = [
+  'Nom du SaaS', 'Email', 'Classification IA', 'Dernière réponse', 'Statut réponse IA',
+  'Voix ajoutée (confirmée)', 'Relance intégration 1 envoyée', 'Relance intégration 2 envoyée', 'Action à faire'
+];
+
+function majSuiviOui_(context) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sh = ss.getSheetByName(SUIVI_OUI_SHEET_NAME);
+  if (!sh) sh = ss.insertSheet(SUIVI_OUI_SHEET_NAME);
+
+  const lignes = [];
+  context.rows.forEach(function (row) {
+    const cls = String(row['Classification réponse IA'] || '');
+    if (!/DIRECT_INTEGRATION|TECHNICAL_INTEGRATION|COMMERCIAL_PARTNERSHIP/i.test(cls)) return;
+    if (!row['Nom du SaaS']) return;
+
+    const voixAjoutee = row['Voix ajoutée (confirmée)'] === true;
+    let action;
+    if (voixAjoutee) action = 'Terminé : voix ajoutée';
+    else if (/DIRECT_INTEGRATION|TECHNICAL_INTEGRATION/i.test(cls)) action = 'Attendre confirmation d\'intégration';
+    else action = 'Discussion partenariat : à traiter à la main';
+
+    lignes.push([
+      String(row['Nom du SaaS']),
+      String(row['Email public'] || ''),
+      cls,
+      row['Dernière réponse'] ? String(row['Dernière réponse']) : '',
+      String(row['Statut réponse IA'] || ''),
+      voixAjoutee ? 'Oui' : 'Non',
+      row['Relance intégration 1 envoyée'] ? 'Oui' : 'Non',
+      row['Relance intégration 2 envoyée'] ? 'Oui' : 'Non',
+      action
+    ]);
+  });
+
+  sh.clearContents();
+  sh.getRange(1, 1, 1, SUIVI_OUI_HEADERS.length).setValues([SUIVI_OUI_HEADERS]);
+  if (lignes.length) {
+    sh.getRange(2, 1, lignes.length, SUIVI_OUI_HEADERS.length).setValues(lignes);
+  }
+}
+
 function watchdogBody_() {
   // Quota Gmail restant, visible à chaque passage horaire dans Réglages (QUOTA_GMAIL_RESTANT),
   // même quand les envois sont en pause.
@@ -6275,6 +6320,7 @@ function watchdogBody_() {
     const contextReponses = getContext_();
     copierReponsesRecues_(contextReponses);
     auditerBoiteReponses_(contextReponses);
+    majSuiviOui_(contextReponses);
   } catch (error) {
     logJournal_('réponses', 'Erreur copie', safeError_(error));
   }
