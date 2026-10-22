@@ -2410,6 +2410,10 @@ function processIntegrationReminders_(context) {
     // pour ce fil : pas besoin d'un rappel automatique en plus en même temps.
     if (/programmée|à valider/i.test(String(row['Statut réponse IA'] || ''))) continue;
 
+    // 22/10 : pas de relance tant que l'ID n'est pas réellement parti dans un mail envoyé.
+    // Un brouillon en attente de validation ne lance aucun compte à rebours.
+    if (String(row['Brouillon réponse IA'] || '').indexOf(VOICE_ID_CORENTIN) === -1) continue;
+
     const replyDate = toDate_(row['Dernière réponse']);
     if (!replyDate) continue;
 
@@ -2421,10 +2425,12 @@ function processIntegrationReminders_(context) {
     // Garde-fou (20/10) : une relance ne part jamais moins de j1 jours après
     // NOTRE dernier message dans le fil (pas de relance juste après une réponse).
     const joursDepuisNous = thread ? joursDepuisNotreDernierMessage_(thread, recipient) : null;
-    if (joursDepuisNous !== null && joursDepuisNous < j1) continue;
+    // Le compte à rebours part de NOTRE dernier message (l'envoi de l'ID). Si le SaaS a
+    // écrit après nous, on ne relance pas : sa réponse doit être traitée d'abord.
+    if (joursDepuisNous === null || joursDepuisNous < j1) continue;
 
     try {
-      if (age >= j2 && !row['Relance intégration 2 envoyée']) {
+      if (joursDepuisNous >= j2 && !row['Relance intégration 2 envoyée']) {
         waitForSendSlot_();
 
         sendIntegrationReminder_(thread, recipient, integrationFollowUp2_(row));
@@ -2434,7 +2440,7 @@ function processIntegrationReminders_(context) {
         });
 
         remaining--;
-      } else if (age >= j1 && !row['Relance intégration 1 envoyée']) {
+      } else if (joursDepuisNous >= j1 && !row['Relance intégration 1 envoyée']) {
         waitForSendSlot_();
 
         sendIntegrationReminder_(thread, recipient, integrationFollowUp1_(row));
