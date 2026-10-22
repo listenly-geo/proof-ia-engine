@@ -6255,13 +6255,15 @@ function watchdogRun() {
   }
 }
 
-// EN COURS DE NÉGOCIATION (22/10/2026) : SaaS qui ont répondu positivement ET à qui l'ID de
-// Corentin a été envoyé dans un mail effectivement parti (statut « Envoyée » + ID dans le texte).
+// EN NÉGOCIATION (22/10/2026) : TOUS les SaaS qui ont répondu positivement (intégration,
+// partenariat, proposition), sauf voix déjà ajoutée et refus. Deux groupes :
+//  - ID ENVOYÉ : mail de réponse parti avec l'ID de Corentin
+//  - À VALIDER : ID pas encore parti, Etienne valide l'envoi
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
 const NEGO_HEADERS = [
-  'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'Voix ajoutée', 'Action à faire'
+  'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action'
 ];
 
 function majSuiviOui_(context) {
@@ -6271,8 +6273,8 @@ function majSuiviOui_(context) {
   let sh = ss.getSheetByName(NEGO_SHEET_NAME);
   if (!sh) sh = ss.insertSheet(NEGO_SHEET_NAME);
 
-  const enCours = [];
-  const idPretNonEnvoye = [];
+  const envoye = [];
+  const aValider = [];
   context.rows.forEach(function (row) {
     const cls = String(row['Classification réponse IA'] || '');
     if (!row['Nom du SaaS'] || row['Voix ajoutée (confirmée)'] === true) return;
@@ -6282,60 +6284,63 @@ function majSuiviOui_(context) {
     const statut = String(row['Statut réponse IA'] || '');
     const brouillon = String(row['Brouillon réponse IA'] || '');
     const idDansTexte = brouillon.indexOf(VOICE_ID_CORENTIN) !== -1;
-    if (!idDansTexte) return;
+    const idEnvoye = idDansTexte && /^Envoyée/i.test(statut);
 
     const ligne = [
       String(row['Nom du SaaS']),
       String(row['Email public'] || ''),
       cls,
       row['Dernière réponse'] ? String(row['Dernière réponse']) : '',
-      'Non',
+      idEnvoye ? 'Oui' : 'Non',
+      statut.substring(0, 80) || '—',
       ''
     ];
-    if (/^Envoyée/i.test(statut)) {
-      ligne[5] = 'ID envoyé : attendre l\'ajout de la voix';
-      enCours.push(ligne);
+    if (idEnvoye) {
+      ligne[6] = 'Rien à faire : attendre l\'ajout de la voix';
+      envoye.push(ligne);
     } else {
-      ligne[5] = 'ID rédigé mais PAS parti (' + (statut.substring(0, 60) || 'statut vide') + ') : à traiter';
-      idPretNonEnvoye.push(ligne);
+      ligne[6] = idDansTexte
+        ? 'Valider l\'envoi de l\'ID (brouillon prêt)'
+        : 'Rédiger puis valider l\'envoi de l\'ID';
+      aValider.push(ligne);
     }
   });
 
   sh.clear();
-  sh.getRange(1, 1, 300, 6).breakApart();
-  sh.getRange(1, 1).setValue('EN COURS DE NÉGOCIATION : ' + enCours.length + ' SaaS avec l\'ID envoyé et voix pas encore ajoutée');
-  sh.getRange(2, 1).setValue('Mis à jour automatiquement chaque heure · ' +
-    idPretNonEnvoye.length + ' autres SaaS ont un ID rédigé mais non parti (voir en bas)');
-  sh.getRange(1, 1, 1, 6).merge().setFontSize(14).setFontWeight('bold').setBackground('#1f3a5f').setFontColor('#ffffff');
-  sh.getRange(2, 1, 1, 6).merge().setFontStyle('italic').setFontColor('#555555');
+  sh.getRange(1, 1, 300, 7).breakApart();
+  sh.getRange(1, 1).setValue('EN NÉGOCIATION : ' + (envoye.length + aValider.length) +
+    ' SaaS disent oui · ' + envoye.length + ' ID envoyé(s) · ' + aValider.length + ' à valider par Etienne');
+  sh.getRange(2, 1).setValue('Mis à jour automatiquement chaque heure. Aucun envoi ne part sans votre validation.');
+  sh.getRange(1, 1, 1, 7).merge().setFontSize(14).setFontWeight('bold').setBackground('#1f3a5f').setFontColor('#ffffff');
+  sh.getRange(2, 1, 1, 7).merge().setFontStyle('italic').setFontColor('#555555');
 
   let r = 4;
-  sh.getRange(r, 1, 1, 6).setValues([NEGO_HEADERS])
-    .setFontWeight('bold').setBackground('#dbe6f3');
+  sh.getRange(r, 1).setValue('ID ENVOYÉ : en attente de l\'ajout de la voix (' + envoye.length + ')')
+    .setFontWeight('bold').setFontColor('#1e6b2e');
   r++;
-  if (enCours.length) {
-    sh.getRange(r, 1, enCours.length, 6).setValues(enCours).setBackground('#eef7ee');
-    r += enCours.length;
+  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setFontWeight('bold').setBackground('#dbe6f3');
+  r++;
+  if (envoye.length) {
+    sh.getRange(r, 1, envoye.length, 7).setValues(envoye).setBackground('#eef7ee');
+    r += envoye.length;
   } else {
     sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
     r++;
   }
 
   r += 2;
-  sh.getRange(r, 1).setValue('ID RÉDIGÉ MAIS PAS ENVOYÉ : à relancer après validation').setFontWeight('bold').setFontColor('#9a3412');
+  sh.getRange(r, 1).setValue('À VALIDER PAR ETIENNE : ID pas encore parti (' + aValider.length + ')')
+    .setFontWeight('bold').setFontColor('#9a3412');
   r++;
-  if (idPretNonEnvoye.length) {
-    sh.getRange(r, 1, idPretNonEnvoye.length, 6).setValues(idPretNonEnvoye).setBackground('#fdf3e7');
+  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setFontWeight('bold').setBackground('#dbe6f3');
+  r++;
+  if (aValider.length) {
+    sh.getRange(r, 1, aValider.length, 7).setValues(aValider).setBackground('#fdf3e7');
   }
 
-  sh.setColumnWidths(1, 1, 200);
-  sh.setColumnWidths(2, 1, 220);
-  sh.setColumnWidths(3, 1, 170);
-  sh.setColumnWidths(4, 1, 120);
-  sh.setColumnWidths(5, 1, 100);
-  sh.setColumnWidths(6, 1, 380);
-  sh.getRange(1, 1, r + idPretNonEnvoye.length, 6).setWrap(true).setVerticalAlignment('middle');
-  sh.setFrozenRows(4);
+  const widths = [200, 220, 170, 120, 90, 260, 300];
+  widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
+  sh.getRange(1, 1, r + aValider.length, 7).setWrap(true).setVerticalAlignment('middle');
 }
 
 function watchdogBody_() {
