@@ -6262,8 +6262,10 @@ function watchdogRun() {
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
+const NEGO_NCOL = 9;
 const NEGO_HEADERS = [
-  'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action'
+  'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action',
+  'Conversation Gmail', 'Brouillon (Prospection)'
 ];
 
 function majSuiviOui_(context) {
@@ -6272,10 +6274,11 @@ function majSuiviOui_(context) {
   if (ancien) ss.deleteSheet(ancien);
   let sh = ss.getSheetByName(NEGO_SHEET_NAME);
   if (!sh) sh = ss.insertSheet(NEGO_SHEET_NAME);
+  const gidProspection = ss.getSheetByName(CONFIG.SHEET_NAME).getSheetId();
 
   const envoye = [];
   const aValider = [];
-  context.rows.forEach(function (row) {
+  context.rows.forEach(function (row, i) {
     const cls = String(row['Classification réponse IA'] || '');
     if (!row['Nom du SaaS'] || row['Voix ajoutée (confirmée)'] === true) return;
     if (!/^\s*(A|B|F|G)\b|INTEGRATION|PARTNERSHIP|PROPOSAL/i.test(cls)) return;
@@ -6285,6 +6288,15 @@ function majSuiviOui_(context) {
     const brouillon = String(row['Brouillon réponse IA'] || '');
     const idDansTexte = brouillon.indexOf(VOICE_ID_CORENTIN) !== -1;
     const idEnvoye = idDansTexte && /^Envoyée/i.test(statut);
+    const ligneSheet = CONFIG.FIRST_DATA_ROW + i;
+    const threadId = String(row['ID conversation'] || '').trim();
+
+    const lienGmail = threadId
+      ? '=HYPERLINK("https://mail.google.com/mail/u/0/?authuser=' + encodeURIComponent(CONFIG.SENDER_ALIAS) +
+        '#all/' + threadId + '","Ouvrir la conversation")'
+      : '—';
+    const lienBrouillon = '=HYPERLINK("https://docs.google.com/spreadsheets/d/' + CONFIG.SPREADSHEET_ID +
+      '/edit#gid=' + gidProspection + '&range=AN' + ligneSheet + '","Voir le brouillon")';
 
     const ligne = [
       String(row['Nom du SaaS']),
@@ -6293,7 +6305,9 @@ function majSuiviOui_(context) {
       row['Dernière réponse'] ? String(row['Dernière réponse']) : '',
       idEnvoye ? 'Oui' : 'Non',
       statut.substring(0, 80) || '—',
-      ''
+      '',
+      lienGmail,
+      lienBrouillon
     ];
     if (idEnvoye) {
       ligne[6] = 'Rien à faire : attendre l\'ajout de la voix';
@@ -6307,7 +6321,7 @@ function majSuiviOui_(context) {
   });
 
   sh.clear();
-  sh.getRange(1, 1, 300, 7).breakApart();
+  sh.getRange(1, 1, 300, NEGO_NCOL).breakApart();
   const NAVY = '#14213d', JAUNE = '#ffd54f', TEAL = '#0e6e7e', ENTETE = '#dce8f2';
   const VERT = '#e3f4e8', ORANGE = '#fde9d4', ROUGE = '#b34700';
 
@@ -6316,22 +6330,22 @@ function majSuiviOui_(context) {
     (envoye.length + aValider.length) + ' SaaS disent oui   ·   ' + envoye.length + ' ID envoyé(s)   ·   ' +
     aValider.length + ' à valider par vous');
   sh.getRange(3, 1).setValue('Mis à jour automatiquement chaque heure. Aucun envoi ne part sans votre validation.');
-  sh.getRange(1, 1, 1, 7).merge().setBackground(NAVY).setFontColor('#ffffff').setFontWeight('bold')
+  sh.getRange(1, 1, 1, NEGO_NCOL).merge().setBackground(NAVY).setFontColor('#ffffff').setFontWeight('bold')
     .setFontSize(18).setHorizontalAlignment('center');
-  sh.getRange(2, 1, 1, 7).merge().setBackground(JAUNE).setFontColor(NAVY).setFontWeight('bold')
+  sh.getRange(2, 1, 1, NEGO_NCOL).merge().setBackground(JAUNE).setFontColor(NAVY).setFontWeight('bold')
     .setFontSize(15).setHorizontalAlignment('center');
-  sh.getRange(3, 1, 1, 7).merge().setBackground('#f5f5f5').setFontColor('#555555').setFontStyle('italic')
+  sh.getRange(3, 1, 1, NEGO_NCOL).merge().setBackground('#f5f5f5').setFontColor('#555555').setFontStyle('italic')
     .setFontSize(10).setHorizontalAlignment('center');
 
   sh.getRange(4, 1).setValue('✅ ID ENVOYÉ : en attente de l\'ajout de la voix (' + envoye.length + ')');
-  sh.getRange(4, 1, 1, 7).merge().setBackground(TEAL).setFontColor('#ffffff').setFontWeight('bold')
+  sh.getRange(4, 1, 1, NEGO_NCOL).merge().setBackground(TEAL).setFontColor('#ffffff').setFontWeight('bold')
     .setFontSize(13).setHorizontalAlignment('left');
   let r = 5;
-  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
+  sh.getRange(r, 1, 1, NEGO_NCOL).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
     .setFontColor(NAVY).setFontSize(10);
   r++;
   if (envoye.length) {
-    sh.getRange(r, 1, envoye.length, 7).setValues(envoye).setBackground(VERT).setFontWeight('bold')
+    sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
     r += envoye.length;
   } else {
@@ -6340,23 +6354,24 @@ function majSuiviOui_(context) {
   }
 
   r++;
-  sh.getRange(r, 1, 1, 7).merge().setValue('⏳ À VALIDER PAR ETIENNE : ID pas encore parti (' + aValider.length + ')')
+  sh.getRange(r, 1, 1, NEGO_NCOL).merge().setValue('⏳ À VALIDER PAR ETIENNE : ID pas encore parti (' + aValider.length + ')')
     .setBackground(ROUGE).setFontColor('#ffffff').setFontWeight('bold').setFontSize(13).setHorizontalAlignment('left');
   r++;
-  sh.getRange(r, 1, 1, 7).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
+  sh.getRange(r, 1, 1, NEGO_NCOL).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
     .setFontColor(NAVY).setFontSize(10);
   r++;
   if (aValider.length) {
-    sh.getRange(r, 1, aValider.length, 7).setValues(aValider).setBackground(ORANGE).setFontSize(10)
+    sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
   }
 
-  const widths = [200, 220, 200, 120, 90, 300, 320];
+  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
   sh.setRowHeight(4, 36);
-  sh.getRange(1, 1, r + aValider.length, 7).setWrap(true).setVerticalAlignment('middle');
+  sh.getRange(1, 1, r + aValider.length, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
+  sh.getRange(1, 8, r + aValider.length, 2).setFontColor('#1155cc');
 }
 
 function watchdogBody_() {
