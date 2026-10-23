@@ -1,7 +1,6 @@
 {
   "timeZone": "Europe/Paris",
-  "dependencies": {
-  },
+  "dependencies": {},
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8",
   "executionApi": {
@@ -13,6 +12,7 @@
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/script.external_request",
     "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/postmaster.readonly"
+    "https://www.googleapis.com/auth/postmaster.readonly",
+    "https://www.googleapis.com/auth/script.send_mail"
   ]
 }
