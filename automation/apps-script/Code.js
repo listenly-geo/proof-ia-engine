@@ -5006,6 +5006,20 @@ function runMachineOpp_(force) {
       queueEligibleRowsOpp_(context);
     }
 
+    if (getBoolSetting_('MASTER_PAUSE')) {
+      // Pause globale (23/10/2026, correctif) : le moteur OPPORTUNITÉS envoyait
+      // des premiers mails et des relances réelles (GmailApp.sendEmail) sans
+      // jamais vérifier MASTER_PAUSE, contrairement au moteur SaaS
+      // (runMachineBody_, voir plus haut) — alors que Réglages et CLAUDE.md
+      // sont explicites : MASTER_PAUSE = TRUE doit bloquer AUCUN envoi, ni
+      // premier mail ni relance, quoi qu'il arrive. Repéré le 23/10 : des
+      // mails Opportunités (premier contact + relance) étaient réellement
+      // partis pendant que MASTER_PAUSE était à TRUE depuis le 20/10. Les
+      // réponses, rebonds et la mise en file (ci-dessus) restent traités
+      // même en pause : aucun envoi, donc sans danger.
+      return;
+    }
+
     if (force || inSendWindow_()) {
       processFollowUpsOpp_(context);
       processInitialQueueOpp_(context, getNumberSetting_('MAX_SENDS_PER_RUN_OPP', 5));
