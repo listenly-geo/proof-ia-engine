@@ -5545,12 +5545,14 @@ function processReplyAgentQueue_(context) {
     //    welcome"...) qui n'apportent rien (ni question, ni information).
     const convKey = 'AI_REPLIES_' + String(row['ID conversation']);
     const sentSoFar = Number(PropertiesService.getScriptProperties().getProperty(convKey) || 0);
-    const maxPerConv = getNumberSetting_('MAX_AI_REPLIES_PER_CONV', 2);
+    // 23/10 : une seule réponse automatique par SaaS et par cycle. Tout nouveau message
+    // du même SaaS passe en « À valider » : Etienne relit avant tout nouvel envoi.
+    const maxPerConv = getNumberSetting_('MAX_AI_REPLIES_PER_CONV', 1);
 
     if (sentSoFar >= maxPerConv) {
       writeFields_(context, sheetRow, {
         'Dernier message IA (ID)': String(reply.id || ''),
-        'Statut réponse IA': 'Limite atteinte (' + maxPerConv + ' réponses IA) — à traiter à la main'
+        'Statut réponse IA': 'À valider manuellement : nouveau message du SaaS après notre réponse'
       });
       continue;
     }
