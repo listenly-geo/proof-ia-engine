@@ -55,7 +55,7 @@ const DEFAULT_SETTINGS = [
   ['AUTO_SEND', 'TRUE',
     'TRUE = les prospects vérifiés sont envoyés sans validation. FALSE = ils sont ajoutés mais non cochés (validation manuelle).'],
   ['DAILY_LIMIT', '100', 'Nombre maximum de premiers e-mails par jour (~100 = quota Gmail personnel via Apps Script).'],
-  ['FOLLOWUP_2_ENABLED', 'FALSE', 'TRUE = envoie la relance 2 (J+9). FALSE = une seule relance (J+4), puis arrêt du suivi.'],
+  ['FOLLOWUP_2_ENABLED', 'TRUE', 'TRUE = envoie la relance 2 (J+9) : 2 relances au total (J+4 et J+9), puis arrêt du suivi. FALSE = une seule relance (J+4).'],
   ['MAX_SENDS_PER_RUN', '15', 'Premiers e-mails envoyés au maximum par passage horaire automatique (étale les envois sur la journée au lieu de tout envoyer d’un coup).'],
   ['MAX_FOLLOWUPS_PER_RUN', '10', 'Relances (classiques + intégration) envoyées au maximum par passage horaire automatique. Évite qu’un gros lot de lignes arrivant au même seuil J+X ne parte toutes en rafale le même jour.'],
   ['SEND_DELAY_MS', '18000', 'Délai en millisecondes entre deux envois consécutifs dans un même passage (évite un pattern de rafale/spam). 18000 = 18 secondes.'],
@@ -69,8 +69,8 @@ const DEFAULT_SETTINGS = [
     'Clé API MyEmailVerifier (https://client.myemailverifier.com). Laisser vide pour désactiver même si EMAIL_VERIFY_ENABLED = TRUE.'],
   ['REPLY_AGENT_AUTO_SEND', 'TRUE',
     'TRUE = l’IA envoie elle-même les réponses à confiance élevée (après le délai aléatoire), seules les réponses incertaines passent en validation manuelle. FALSE = TOUTE réponse générée par l’IA reste en brouillon « À valider manuellement », jamais envoyée automatiquement.'],
-  ['INTEGRATION_REMINDER_ENABLED', 'TRUE',
-    'TRUE = relance automatiquement (à J+7 puis J+14 après leur réponse) les prospects qui ont répondu mais n’ont jamais coché « Voix ajoutée (confirmée) ». FALSE = aucune relance de ce type.'],
+  ['INTEGRATION_REMINDER_ENABLED', 'FALSE',
+    'Relances de confirmation d’intégration : désactivées (24/10/2026). Ces relances sont gérées à la main par Etienne. FALSE = aucune relance de ce type.'],
   ['INTEGRATION_REMINDER_J1', '7', 'Jours après leur réponse avant le 1er rappel « où en êtes-vous ? ».'],
   ['INTEGRATION_REMINDER_J2', '14', 'Jours après leur réponse avant le rappel final.'],
   ['TPL_INTEGRATION_FU1',
@@ -2375,6 +2375,10 @@ function joursDepuisNotreDernierMessage_(thread, recipient) {
 // par migrateConfirmedPartners_, donc une réponse positive confirmée arrête
 // la relance ET fait avancer le prospect dans le même mouvement.
 function processIntegrationReminders_(context) {
+  // 24/10/2026 : relances de confirmation d'intégration retirées du moteur.
+  // Etienne les gère lui-même. Ne rien envoyer ici, quel que soit le réglage.
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!getBoolSetting_('INTEGRATION_REMINDER_ENABLED')) return;
 
   const now = new Date();
@@ -4522,7 +4526,7 @@ function isPoliteClosing_(text) {
 }
 
 // Signature complète validée le 17/10/2026 (sans photo pour l'instant).
-const LICENCING_SIGNATURE_ = 'Best,\nCorentin\nCorentin AI Voice\nInstagram : https://www.instagram.com/corentin_n1_voice_/';
+const LICENCING_SIGNATURE_ = 'Best,\nCorentin Cugnet\nInstagram : https://www.instagram.com/corentin_n1_voice_/';
 
 // TEST (18/10/2026) : envoie UNE réponse licencing (Voice-Swap) à l'adresse
 // de test d'Etienne, pour valider le rendu avant tout envoi à un prospect.
@@ -5676,26 +5680,22 @@ function processReplyAgentQueue_(context) {
     // Compte cette réponse IA pour la limite de la conversation.
     PropertiesService.getScriptProperties().setProperty(convKey, String(sentSoFar + 1));
 
-    const needsHuman =
-      !getBoolSetting_('REPLY_AGENT_AUTO_SEND') ||
-      !!result.human_review_required ||
-      !isFinite(Number(result.confidence)) ||
-      Number(result.confidence) < 0.75;
+    // 24/10/2026 (décision d'Etienne) : le moteur ne envoie JAMAIS une réponse
+    // toute seule. Chaque réponse de l'IA est rédigée en brouillon, dans le
+    // fil Gmail et dans le Sheet ; Etienne relit et valide l'envoi lui-même.
+    const needsHuman = true;
 
     if (needsHuman) {
-      // Catégorie G : en plus du brouillon écrit dans le Sheet, on crée un
-      // VRAI brouillon Gmail dans le fil (visible directement dans Gmail,
-      // sous le message du prospect, fil déjà marqué Important + Suivi).
-      // Etienne n'a qu'à ouvrir Gmail, relire/ajuster et cliquer Envoyer —
-      // aucun envoi n'est fait automatiquement.
-      if (isCommercialPartnership) {
-        try {
-          thread.createDraftReplyAll(body, initialMailOptions_(body));
-        } catch (draftError) {
-          logJournal_('ReplyAgent', 'Erreur création brouillon Gmail réel', String(row['Nom du SaaS'] || '') +
-            ' : ' + safeError_(draftError));
-        }
+      // Brouillon réel dans le fil Gmail (sous le message du prospect) : il
+      // suffit d'ouvrir le lien noté dans le Sheet, relire et cliquer Envoyer.
+      try {
+        thread.createDraftReplyAll(body, initialMailOptions_(body));
+      } catch (draftError) {
+        logJournal_('ReplyAgent', 'Erreur création brouillon Gmail réel', String(row['Nom du SaaS'] || '') +
+          ' : ' + safeError_(draftError));
+      }
 
+      if (isCommercialPartnership) {
         // Demandé par Etienne le 16/10 : toute proposition de partenariat
         // commercial (catégorie G) est aussi recensée dans un onglet dédié
         // "Licencings", pour avoir une vue d'ensemble sans fouiller dans
@@ -5719,7 +5719,8 @@ function processReplyAgentQueue_(context) {
         'Brouillon réponse IA': body,
         'Statut réponse IA': 'À valider manuellement',
         'Envoi réponse prévu': '',
-        'Dernier message IA (ID)': String(reply.id || '')
+        'Dernier message IA (ID)': String(reply.id || ''),
+        'Notes / prochaine action': 'Brouillon prêt à valider : https://mail.google.com/mail/u/0/#all/' + thread.getId()
       }, confirmationFields));
       continue;
     }
