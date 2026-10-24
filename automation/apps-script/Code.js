@@ -4727,6 +4727,36 @@ function applyPostmasterAdjustment_(scoreInfo) {
   return { ratio: ratio, newLimit: newLimit, newRun: newRun };
 }
 
+// Lecture Postmaster visible (24/10/2026) : une fois par jour, depuis le passage horaire,
+// on lit le score et on l'écrit dans Journal script + Réglages (POSTMASTER_DERNIER_SCORE).
+// RÈGLE : un manque de données (ou une erreur de lecture) n'a JAMAIS d'effet sur les
+// envois : ni pause, ni baisse du volume. Seul un vrai score peut ajuster le rythme.
+function surveillerPostmaster_() {
+  const props = PropertiesService.getScriptProperties();
+  const todayKey = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd');
+  const hour = Number(Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'H'));
+  // Un essai par jour, après 10h (les données Postmaster du jour précédent sont alors publiées).
+  if (hour < 10 || props.getProperty('POSTMASTER_VU_' + todayKey)) return;
+
+  const stats = fetchPostmasterTrafficStats_();
+  const score = computePostmasterScore_(stats);
+  if (!score) {
+    // On retentera au prochain passage horaire, sans rien modifier.
+    const essais = Number(props.getProperty('POSTMASTER_ESSAIS_' + todayKey) || 0) + 1;
+    props.setProperty('POSTMASTER_ESSAIS_' + todayKey, String(essais));
+    if (essais >= 3) props.setProperty('POSTMASTER_VU_' + todayKey, 'sans données');
+    setSetting_('POSTMASTER_DERNIER_SCORE', 'aucune donnée (essai du ' + todayKey + ') — sans effet sur les envois');
+    logJournal_('Postmaster', 'ℹ️ aucune donnée', 'essai ' + essais + '/3 — envois inchangés');
+    return;
+  }
+
+  props.setProperty('POSTMASTER_VU_' + todayKey, String(score.score));
+  setSetting_('POSTMASTER_DERNIER_SCORE', score.score + '/100 au ' + score.date +
+    ' (réputation ' + score.domainReputation + ', spam ' + score.spamRatioPct + ' %)');
+  logJournal_('Postmaster', '✅ score lu', score.score + '/100 — ' + score.domainReputation);
+  applyPostmasterAdjustment_(score);
+}
+
 function extractEmail_(value) {
   const match = String(value || '')
     .toLowerCase()
@@ -6779,6 +6809,11 @@ function watchdogBody_() {
   }
   checkTriggers_();
   checkCadence_();
+  try {
+    surveillerPostmaster_();
+  } catch (error) {
+    logJournal_('Postmaster', 'ℹ️ lecture impossible (sans effet sur les envois)', safeError_(error));
+  }
   try {
     verifierEnvoisGmail_();
   } catch (error) {
