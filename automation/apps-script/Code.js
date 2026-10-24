@@ -357,7 +357,7 @@ function onOpen() {
       'migratePartnersNow'
     )
     .addItem(
-      '✅ Appliquer les cases « Partenariat activé » maintenant',
+      '✅ Appliquer les cases cochées (relances ID + partenariat) maintenant',
       'appliquerCasesPartenariatNow'
     )
     .addSeparator()
@@ -2310,12 +2310,15 @@ function controleAvantEnvoi_(recipient, type, dedupe) {
 // Contrairement à sendFollowUp_, on envoie volontairement ALORS QU'il y a
 // déjà eu une réponse externe (c'est le but), donc pas de garde-fou
 // hasExternalReply_ ici.
-function sendIntegrationReminder_(thread, recipient, body) {
+function sendIntegrationReminder_(thread, recipient, body, skipDedupe) {
   if (!isValidEmail_(recipient)) {
     throw new Error('Adresse de relance intégration invalide.');
   }
 
-  const refusIntegration = controleAvantEnvoi_(recipient, 'Relance intégration', true);
+  // skipDedupe : envoi manuel (clic d'Etienne). Le doublon est déjà bloqué par la
+  // colonne « Relance intégration N envoyée » ; le contrôle 24 h mettrait sinon
+  // MASTER_PAUSE à TRUE à tort (relance 1 puis 2 le même jour).
+  const refusIntegration = controleAvantEnvoi_(recipient, 'Relance intégration', !skipDedupe);
   if (refusIntegration) throw new Error(refusIntegration);
 
   if (!thread) {
@@ -2676,11 +2679,12 @@ function appliquerCasesPartenariatNow() {
   assertRequiredHeaders_();
 
   const context = getContext_();
-  majSuiviOui_(context);
+  const resultats = majSuiviOui_(context, { envoyer: true }) || [];
 
   notify_(
-    'Cases « Partenariat activé » appliquées : les SaaS cochés sont passés ' +
-    'dans « ' + PARTNERS_SHEET_NAME + ' » et l’onglet EN NÉGOCIATION est à jour.'
+    'Cases appliquées. Les SaaS cochés « Partenariat activé » sont passés dans « ' +
+    PARTNERS_SHEET_NAME + ' ».' +
+    (resultats.length ? '\n\nRelances de confirmation d’ID :\n' + resultats.join('\n') : '')
   );
 }
 
@@ -6326,13 +6330,55 @@ function watchdogRun() {
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
-const NEGO_NCOL = 10;
+const NEGO_NCOL = 12;
 const NEGO_HEADERS = [
   'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action',
-  'Conversation Gmail', 'Brouillon (Prospection)', 'Partenariat activé'
+  'Conversation Gmail', 'Brouillon (Prospection)', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
+  'Partenariat activé'
 ];
 
-function majSuiviOui_(context) {
+// Relance de confirmation d'ID envoyée À LA DEMANDE (case « Relance 1 / 2 » cochée
+// par Etienne dans EN NÉGOCIATION, puis clic sur le menu). Aucun envoi automatique.
+// Garde-fous : MASTER_PAUSE vérifié par l'appelant ; ici, voix déjà présente (banni),
+// refus détecté, déjà envoyée, plage horaire / rafale (controleAvantEnvoi_).
+function envoyerRelanceConfirmationID_(context, row, i, n) {
+  const nom = String(row['Nom du SaaS'] || '');
+  const champ = 'Relance intégration ' + n + ' envoyée';
+
+  if (row[champ]) return nom + ' : relance ' + n + ' déjà envoyée';
+  if (n === 2 && !row['Relance intégration 1 envoyée']) {
+    return nom + ' : envoyez d’abord la relance 1';
+  }
+  if (isPresentBanned_(row)) return nom + ' : bloqué (voix déjà présente chez ce SaaS)';
+  if (/reject|refus/i.test(String(row['Classification réponse IA'] || ''))) {
+    return nom + ' : refus détecté, aucune relance';
+  }
+
+  const recipient = String(row['Email public'] || '').trim();
+  const thread = getThreadSafely_(row['ID conversation']);
+
+  if (!thread) return nom + ' : conversation Gmail introuvable';
+
+  try {
+    waitForSendSlot_();
+    sendIntegrationReminder_(
+      thread,
+      recipient,
+      n === 1 ? integrationFollowUp1_(row) : integrationFollowUp2_(row),
+      true
+    );
+
+    const fields = {};
+    fields[champ] = new Date();
+    writeFields_(context, CONFIG.FIRST_DATA_ROW + i, fields);
+
+    return nom + ' : relance ' + n + ' envoyée ✅';
+  } catch (error) {
+    return nom + ' : non envoyée (' + safeError_(error) + ')';
+  }
+}
+
+function majSuiviOui_(context, opts) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const ancien = ss.getSheetByName('Suivi oui');
   if (ancien) ss.deleteSheet(ancien);
@@ -6343,10 +6389,35 @@ function majSuiviOui_(context) {
   // Cases « Partenariat activé » cochées à la main dans l'onglet (lues AVANT la
   // reconstruction, qui efface l'onglet). Coché = le SaaS passe partenaire actif.
   const cochees = {};
+  const cocheesR1 = {};
+  const cocheesR2 = {};
   if (sh.getLastRow() >= 6) {
     sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().forEach(function (line) {
-      if (line[9] === true && line[0]) cochees[normalizeName_(line[0])] = true;
+      if (!line[0]) return;
+      const cle = normalizeName_(line[0]);
+      if (line[9] === true) cocheesR1[cle] = true;
+      if (line[10] === true) cocheesR2[cle] = true;
+      if (line[11] === true) cochees[cle] = true;
     });
+  }
+
+  // Relances de confirmation d'ID : envoyées UNIQUEMENT quand Etienne clique sur le
+  // menu (opts.envoyer), jamais par le passage horaire. Jamais pendant MASTER_PAUSE.
+  const resultats = [];
+  if (opts && opts.envoyer) {
+    if (getBoolSetting_('MASTER_PAUSE')) {
+      if (Object.keys(cocheesR1).length || Object.keys(cocheesR2).length) {
+        resultats.push('⏸ MASTER_PAUSE est à TRUE : aucune relance envoyée (vos cases restent cochées).');
+      }
+    } else {
+      assertSenderAlias_();
+      context.rows.forEach(function (row, i) {
+        if (!row['Nom du SaaS']) return;
+        const cle = normalizeName_(row['Nom du SaaS']);
+        if (cocheesR1[cle]) resultats.push(envoyerRelanceConfirmationID_(context, row, i, 1));
+        if (cocheesR2[cle]) resultats.push(envoyerRelanceConfirmationID_(context, row, i, 2));
+      });
+    }
   }
 
   const envoye = [];
@@ -6387,6 +6458,8 @@ function majSuiviOui_(context) {
       '',
       lienGmail,
       lienBrouillon,
+      !!row['Relance intégration 1 envoyée'] || cocheesR1[normalizeName_(row['Nom du SaaS'])] === true,
+      !!row['Relance intégration 2 envoyée'] || cocheesR2[normalizeName_(row['Nom du SaaS'])] === true,
       false
     ];
     if (idEnvoye) {
@@ -6431,7 +6504,7 @@ function majSuiviOui_(context) {
   if (envoye.length) {
     sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, NEGO_NCOL, envoye.length, 1).insertCheckboxes();
+    sh.getRange(r, NEGO_NCOL - 2, envoye.length, 3).insertCheckboxes();
     r += envoye.length;
   } else {
     sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
@@ -6448,16 +6521,18 @@ function majSuiviOui_(context) {
   if (aValider.length) {
     sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
-    sh.getRange(r, NEGO_NCOL, aValider.length, 1).insertCheckboxes();
+    sh.getRange(r, NEGO_NCOL - 2, aValider.length, 3).insertCheckboxes();
   }
 
-  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180, 140];
+  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180, 150, 150, 140];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
   sh.setRowHeight(4, 36);
   sh.getRange(1, 1, r + aValider.length, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
   sh.getRange(1, 8, r + aValider.length, 2).setFontColor('#1155cc');
+
+  return resultats;
 }
 
 function watchdogBody_() {
