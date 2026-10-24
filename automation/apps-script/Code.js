@@ -4526,7 +4526,25 @@ function isPoliteClosing_(text) {
 }
 
 // Signature complète validée le 17/10/2026 (sans photo pour l'instant).
-const LICENCING_SIGNATURE_ = 'Best,\nCorentin Cugnet\nInstagram : https://www.instagram.com/corentin_n1_voice_/';
+// 24/10/2026 : le corps ne se termine que par « Best, ». La signature (Corentin
+// Cugnet, French voice-over, site, Instagram) est ajoutée automatiquement par
+// formatBodyHtml_ (buildSignatureHtml_) : l'écrire aussi ici la dupliquerait.
+const LICENCING_SIGNATURE_ = 'Best,';
+
+// Ramène la formule de politesse finale d'une réponse à « Best, » seul (retire
+// le « Corentin » écrit par l'IA), pour que la signature automatique ne se
+// répète pas juste en dessous.
+function normalizeSignoff_(text) {
+  const paragraphs = String(text).trim().split(/\n{2,}/);
+
+  for (let i = paragraphs.length - 1; i >= 0; i--) {
+    if (/^(best|kind regards|regards|cheers)\b/i.test(paragraphs[i].trim())) {
+      return paragraphs.slice(0, i).concat(['Best,']).join('\n\n');
+    }
+  }
+
+  return paragraphs.join('\n\n') + '\n\nBest,';
+}
 
 // TEST (18/10/2026) : envoie UNE réponse licencing (Voice-Swap) à l'adresse
 // de test d'Etienne, pour valider le rendu avant tout envoi à un prospect.
@@ -4551,7 +4569,7 @@ function testerReponseLicencing() {
   waitForSendSlot_();
   GmailApp.sendEmail(to, '[TEST] Re: Question concerning my voice on your platform', body, {
     htmlBody: asciiSafeHtml_(stripEmoji_(formatBodyHtml_(body))),
-    name: 'Corentin AI Voice'
+    name: CONFIG.SENDER_NAME
   });
   SpreadsheetApp.getActive().toast('Mail de test envoyé à ' + to, 'Test licencing', 8);
 }
@@ -5629,6 +5647,10 @@ function processReplyAgentQueue_(context) {
     if (isCommercialPartnership && body) {
       body = stripEmoji_(applyWhatsAppCta_(body));
     }
+
+    // Signature automatique : le brouillon se termine par « Best, » seul, la
+    // signature complète est ajoutée sous le texte (pas de « Corentin » en double).
+    if (body) body = normalizeSignoff_(body);
 
     if (isCommercialPartnership) {
       try {
@@ -6919,7 +6941,7 @@ function envoyerLicencingLundi_() {
         formatBodyHtml_(body) +
         '</div>'
       )),
-      name: 'Corentin AI Voice'
+      name: CONFIG.SENDER_NAME
     });
     props.setProperty(key, new Date().toISOString());
     results.push(item.saas + ' : envoyé');
