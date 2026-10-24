@@ -6285,10 +6285,10 @@ function watchdogRun() {
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
-const NEGO_NCOL = 9;
+const NEGO_NCOL = 10;
 const NEGO_HEADERS = [
   'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action',
-  'Conversation Gmail', 'Brouillon (Prospection)'
+  'Conversation Gmail', 'Brouillon (Prospection)', 'Partenariat activé'
 ];
 
 function majSuiviOui_(context) {
@@ -6299,9 +6299,24 @@ function majSuiviOui_(context) {
   if (!sh) sh = ss.insertSheet(NEGO_SHEET_NAME);
   const gidProspection = ss.getSheetByName(CONFIG.SHEET_NAME).getSheetId();
 
+  // Cases « Partenariat activé » cochées à la main dans l'onglet (lues AVANT la
+  // reconstruction, qui efface l'onglet). Coché = le SaaS passe partenaire actif.
+  const cochees = {};
+  if (sh.getLastRow() >= 6) {
+    sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().forEach(function (line) {
+      if (line[9] === true && line[0]) cochees[normalizeName_(line[0])] = true;
+    });
+  }
+
   const envoye = [];
   const aValider = [];
   context.rows.forEach(function (row, i) {
+    if (row['Nom du SaaS'] && cochees[normalizeName_(row['Nom du SaaS'])]) {
+      if (row['Voix ajoutée (confirmée)'] !== true) {
+        writeFields_(context, CONFIG.FIRST_DATA_ROW + i, { 'Voix ajoutée (confirmée)': true });
+      }
+      return;
+    }
     const cls = String(row['Classification réponse IA'] || '');
     if (!row['Nom du SaaS'] || row['Voix ajoutée (confirmée)'] === true) return;
     if (!/^\s*(A|B|F|G)\b|INTEGRATION|PARTNERSHIP|PROPOSAL/i.test(cls)) return;
@@ -6330,7 +6345,8 @@ function majSuiviOui_(context) {
       statut.substring(0, 80) || '—',
       '',
       lienGmail,
-      lienBrouillon
+      lienBrouillon,
+      false
     ];
     if (idEnvoye) {
       ligne[6] = 'Rien à faire : attendre l\'ajout de la voix';
@@ -6342,6 +6358,10 @@ function majSuiviOui_(context) {
       aValider.push(ligne);
     }
   });
+
+  // Les SaaS cochés passent en partenaires actifs (même logique que la case
+  // « Voix ajoutée (confirmée) ») : ajoutés à « Partenaires actifs » et sortis d'ici.
+  migrateConfirmedPartners_(context);
 
   sh.clear();
   sh.getRange(1, 1, 300, NEGO_NCOL).breakApart();
@@ -6370,6 +6390,7 @@ function majSuiviOui_(context) {
   if (envoye.length) {
     sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
+    sh.getRange(r, NEGO_NCOL, envoye.length, 1).insertCheckboxes();
     r += envoye.length;
   } else {
     sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
@@ -6386,9 +6407,10 @@ function majSuiviOui_(context) {
   if (aValider.length) {
     sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
+    sh.getRange(r, NEGO_NCOL, aValider.length, 1).insertCheckboxes();
   }
 
-  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180];
+  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180, 140];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
