@@ -356,6 +356,10 @@ function onOpen() {
       '🤝 Déplacer les partenaires confirmés maintenant',
       'migratePartnersNow'
     )
+    .addItem(
+      '✅ Appliquer les cases « Partenariat activé » maintenant',
+      'appliquerCasesPartenariatNow'
+    )
     .addSeparator()
     .addItem('Désactiver la machine', 'disableProspectionMachine')
     .addSeparator()
@@ -2663,6 +2667,21 @@ function migrateConfirmedPartners_(context) {
   });
 
   return moved;
+}
+
+// Menu : applique tout de suite les cases « Partenariat activé » cochées dans
+// l'onglet EN NÉGOCIATION (sinon elles sont prises en compte au passage horaire).
+// Les SaaS cochés passent dans « Partenaires actifs » et sortent de l'onglet.
+function appliquerCasesPartenariatNow() {
+  assertRequiredHeaders_();
+
+  const context = getContext_();
+  majSuiviOui_(context);
+
+  notify_(
+    'Cases « Partenariat activé » appliquées : les SaaS cochés sont passés ' +
+    'dans « ' + PARTNERS_SHEET_NAME + ' » et l’onglet EN NÉGOCIATION est à jour.'
+  );
 }
 
 // Menu : déplacement immédiat, sans attendre le passage horaire automatique.
