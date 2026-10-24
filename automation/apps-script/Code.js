@@ -56,7 +56,8 @@ const DEFAULT_SETTINGS = [
     'TRUE = les prospects vérifiés sont envoyés sans validation. FALSE = ils sont ajoutés mais non cochés (validation manuelle).'],
   ['DAILY_LIMIT', '100', 'Nombre maximum de premiers e-mails par jour (~100 = quota Gmail personnel via Apps Script).'],
   ['FOLLOWUP_2_ENABLED', 'TRUE', 'TRUE = envoie la relance 2 (J+9) : 2 relances au total (J+4 et J+9), puis arrêt du suivi. FALSE = une seule relance (J+4).'],
-  ['MAX_SENDS_PER_RUN', '15', 'Premiers e-mails envoyés au maximum par passage horaire automatique (étale les envois sur la journée au lieu de tout envoyer d’un coup).'],
+  ['QUOTA_RESERVE', '30', 'Quota Gmail gardé en réserve pour tes réponses manuelles : les envois automatiques (1er mail, relances) s’arrêtent quand il reste moins de 20 + cette réserve. Le moteur répartit le quota restant sur les heures restantes de la journée.'],
+  ['MAX_SENDS_PER_RUN', '15','Premiers e-mails envoyés au maximum par passage horaire automatique (étale les envois sur la journée au lieu de tout envoyer d’un coup).'],
   ['MAX_FOLLOWUPS_PER_RUN', '10', 'Relances (classiques + intégration) envoyées au maximum par passage horaire automatique. Évite qu’un gros lot de lignes arrivant au même seuil J+X ne parte toutes en rafale le même jour.'],
   ['SEND_DELAY_MS', '18000', 'Délai en millisecondes entre deux envois consécutifs dans un même passage (évite un pattern de rafale/spam). 18000 = 18 secondes.'],
   ['WEEKDAYS_ONLY', 'TRUE', 'TRUE = envois et relances du lundi au vendredi uniquement.'],
@@ -1600,7 +1601,7 @@ function runMachineBody_(force) {
       // les rebonds. Le nombre de rebonds récents reste calculé et affiché
       // dans le rapport quotidien (Historique / Synthèse), seulement pour
       // information — il ne bloque plus les envois.
-      processInitialQueue_(context, getNumberSetting_('MAX_SENDS_PER_RUN', 15));
+      processInitialQueue_(context, budgetPasse_(getNumberSetting_('MAX_SENDS_PER_RUN', 15)));
     }
 
     const after = counters_(context);
@@ -1926,6 +1927,16 @@ function processInitialQueue_(context, cap) {
 
       remaining--;
     } catch (error) {
+      if (!sent && isSoftRefusal_(error)) {
+        // Refus doux (pause, quota, rafale) : la ligne reste en file, on arrête ce passage.
+        writeFields_(context, sheetRow, { 'Envoyer': true });
+        break;
+      }
+      if (!sent && isGmailQuotaError_(error)) {
+        gererErreurQuotaGmail_(error);
+        writeFields_(context, sheetRow, { 'Envoyer': true });
+        break;
+      }
       writeFields_(context, sheetRow, {
         'Envoyer': false,
         'À relancer': false,
@@ -2146,6 +2157,11 @@ function processFollowUps_(context) {
         remaining--;
       }
     } catch (error) {
+      if (isSoftRefusal_(error)) break;
+      if (isGmailQuotaError_(error)) {
+        gererErreurQuotaGmail_(error);
+        break;
+      }
       writeFields_(context, sheetRow, {
         'État envoi': 'Erreur relance',
         'Erreur envoi': safeError_(error)
@@ -2242,8 +2258,16 @@ function journaliserEnvoi_(type, saas, recipient, threadId) {
 // - doublon : un envoi déjà parti à ce destinataire dans les 24 h (si dedupe)
 // Une rafale ou un doublon mettent aussi MASTER_PAUSE à TRUE : c'est une anomalie.
 function controleAvantEnvoi_(recipient, type, dedupe) {
-  // Quota Gmail réel (20/10) : Google indique combien d'envois il reste aujourd'hui.
-  // Si le quota est presque épuisé, on n'envoie plus rien (pas de pause : on reprend le lendemain).
+  // Pause douce (24/10/2026) : après une rafale ou une erreur de quota Gmail, on
+  // attend un peu au lieu de couper tout le moteur (MASTER_PAUSE reste manuel).
+  const reste = cooldownRestantMin_();
+  if (reste > 0) {
+    return SOFT_PREFIX_ + 'pause douce encore ' + reste + ' min (' + (cooldownRaison_() || 'sécurité') + ')';
+  }
+
+  // Quota Gmail réel : Google indique combien d'envois il reste aujourd'hui.
+  // Les envois automatiques (1er mail, relances) gardent une réserve pour tes
+  // réponses manuelles ; les réponses IA et envois au clic peuvent l'utiliser.
   const quotaRestant = MailApp.getRemainingDailyQuota();
   setSetting_('QUOTA_GMAIL_RESTANT', quotaRestant + ' (lu à ' +
     Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'HH:mm') + ')');
@@ -2251,7 +2275,11 @@ function controleAvantEnvoi_(recipient, type, dedupe) {
     logJournal_('quota', 'ℹ️ quota Gmail bas', 'restant=' + quotaRestant + ' (seuil 100) — ' + type);
   }
   if (quotaRestant < 20) {
-    return 'quota Gmail épuisé pour aujourd\'hui (restant ' + quotaRestant + ')';
+    return SOFT_PREFIX_ + 'quota Gmail épuisé pour aujourd\'hui (restant ' + quotaRestant + ')';
+  }
+  const reserve = getNumberSetting_('QUOTA_RESERVE', 30);
+  if ((type === 'Premier mail' || type === 'Relance') && quotaRestant < 20 + reserve) {
+    return SOFT_PREFIX_ + 'quota réservé à tes réponses (restant ' + quotaRestant + ', réserve ' + reserve + ')';
   }
 
   const parisParts = Utilities.formatDate(new Date(), 'Europe/Paris', 'u H').split(' ');
@@ -2291,16 +2319,79 @@ function controleAvantEnvoi_(recipient, type, dedupe) {
   // Rafale : plus d'un passage complet (MAX_SENDS_PER_RUN_CEILING) en 5 minutes
   // = deux passages qui se chevauchent : anomalie.
   if (recent >= getNumberSetting_('MAX_SENDS_PER_RUN_CEILING', 13)) {
-    setSetting_('MASTER_PAUSE', 'TRUE');
-    logJournal_('sécurité', '⛔ rafale détectée : pause automatique', type);
-    return 'rafale : passage en double détecté (trop d\'envois en 5 minutes)';
+    setCooldown_(15, 'rafale');
+    logJournal_('sécurité', '⏸️ rafale détectée : pause douce 15 min', type);
+    return SOFT_PREFIX_ + 'rafale : trop d\'envois en 5 minutes, pause douce 15 min';
   }
   if (doublon) {
-    setSetting_('MASTER_PAUSE', 'TRUE');
-    logJournal_('sécurité', '⛔ doublon détecté : pause automatique', recipient);
+    // Seul ce destinataire est refusé ; le reste du moteur continue.
+    logJournal_('sécurité', '⛔ doublon évité (seul cet envoi refusé)', recipient);
     return 'doublon : envoi déjà parti à ce destinataire dans les 24 h';
   }
   return null;
+}
+
+// ---------------------------------------------------------------
+// QUOTA ADAPTATIF (24/10/2026)
+// ---------------------------------------------------------------
+// Principe : au lieu de tout couper (MASTER_PAUSE) à la moindre anomalie, le moteur
+// - calcule un budget d'envois par passage d'après le quota Gmail restant,
+// - ralentit/attend (pause douce) après une rafale ou une erreur de quota,
+// - reprend seul. MASTER_PAUSE reste un interrupteur manuel uniquement.
+const SOFT_PREFIX_ = 'SOFT: ';
+
+function isSoftRefusal_(error) {
+  return String(error && error.message || error).indexOf(SOFT_PREFIX_) === 0;
+}
+
+function isGmailQuotaError_(error) {
+  return /Trop d.appels|too many times|invoked too many|limit exceeded|quota/i.test(
+    String(error && error.message || error));
+}
+
+function setCooldown_(minutes, reason) {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('COOLDOWN_UNTIL_MS', String(Date.now() + minutes * 60000));
+  props.setProperty('COOLDOWN_REASON', reason || '');
+}
+
+function cooldownRestantMin_() {
+  const until = Number(PropertiesService.getScriptProperties().getProperty('COOLDOWN_UNTIL_MS') || 0);
+  return until > Date.now() ? Math.ceil((until - Date.now()) / 60000) : 0;
+}
+
+function cooldownRaison_() {
+  return PropertiesService.getScriptProperties().getProperty('COOLDOWN_REASON') || '';
+}
+
+// Erreur Gmail de quota pendant un envoi : pause douce croissante (60 min, puis
+// 120, puis jusqu'au lendemain) ; le rythme repart prudemment via la sonde existante.
+function gererErreurQuotaGmail_(error) {
+  const props = PropertiesService.getScriptProperties();
+  const todayKey = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd');
+  const key = 'QUOTA_HITS_' + todayKey;
+  const hits = Number(props.getProperty(key) || 0) + 1;
+  props.setProperty(key, String(hits));
+  props.setProperty('QUOTA_BLOCKED', todayKey);
+  const minutes = hits === 1 ? 60 : (hits === 2 ? 120 : 600);
+  setCooldown_(minutes, 'quota Gmail atteint');
+  logJournal_('quota', '⏸️ erreur quota Gmail : pause douce ' + minutes + ' min', safeError_(error));
+}
+
+// Budget d'envois pour CE passage : quota restant (moins la réserve) réparti sur
+// les heures restantes de la plage d'envoi, borné par la limite par passage.
+function budgetPasse_(cap) {
+  if (cooldownRestantMin_() > 0) return 0;
+  const quota = MailApp.getRemainingDailyQuota();
+  const reserve = getNumberSetting_('QUOTA_RESERVE', 30);
+  const dispo = Math.max(0, quota - 20 - reserve);
+  const hour = Number(Utilities.formatDate(new Date(), 'Europe/Paris', 'H'));
+  const endHour = getNumberSetting_('SEND_END_HOUR', 19);
+  const heuresRestantes = Math.max(1, endHour - hour);
+  // Un petit surplus (x1.5) évite de sous-consommer si des heures sont creuses.
+  const parHeure = Math.ceil(dispo / heuresRestantes * 1.5);
+  const budget = Math.min(dispo, parHeure);
+  return cap === undefined ? budget : Math.min(cap, budget);
 }
 
 // ---------------------------------------------------------------
