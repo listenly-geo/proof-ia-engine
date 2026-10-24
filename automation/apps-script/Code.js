@@ -360,6 +360,10 @@ function onOpen() {
       '✅ Appliquer les cases cochées (relances ID + partenariat) maintenant',
       'appliquerCasesPartenariatNow'
     )
+    .addItem(
+      '⚡ Activer l’envoi au clic des cases (une seule fois)',
+      'activerEnvoiAuClic'
+    )
     .addSeparator()
     .addItem('Désactiver la machine', 'disableProspectionMachine')
     .addSeparator()
@@ -2670,6 +2674,144 @@ function migrateConfirmedPartners_(context) {
   });
 
   return moved;
+}
+
+// ---------------------------------------------------------------
+// ENVOI AU CLIC : cases de l'onglet EN NÉGOCIATION (24/10/2026)
+// ---------------------------------------------------------------
+// Cocher « Relance 1 », « Relance 2 » ou « Partenariat activé » agit tout de suite,
+// après une fenêtre de confirmation (évite un envoi par clic accidentel). Il faut un
+// déclencheur « à la modification », installé UNE fois par activerEnvoiAuClic, sous
+// le compte propriétaire du script (même règle que tous les autres déclencheurs).
+const NEGO_EDIT_HANDLER = 'onEditNegociation_';
+const NEGO_TRIGGER_OWNER = 'partnership.voiceover@corentin-cugnet.fr';
+
+function activerEnvoiAuClic() {
+  const self = Session.getEffectiveUser().getEmail().toLowerCase();
+
+  if (self !== NEGO_TRIGGER_OWNER) {
+    notify_(
+      'Activation refusée : vous êtes connecté avec ' + self + '. Les déclencheurs doivent ' +
+      'appartenir au compte ' + NEGO_TRIGGER_OWNER + '. Ouvrez le Sheet avec ce compte puis ' +
+      'relancez cette action.'
+    );
+    return;
+  }
+
+  ScriptApp.getProjectTriggers().forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === NEGO_EDIT_HANDLER) ScriptApp.deleteTrigger(trigger);
+  });
+
+  ScriptApp.newTrigger(NEGO_EDIT_HANDLER)
+    .forSpreadsheet(CONFIG.SPREADSHEET_ID)
+    .onEdit()
+    .create();
+
+  notify_(
+    'Envoi au clic activé. Dans EN NÉGOCIATION, cocher une case de relance ou de ' +
+    'partenariat demande une confirmation, puis agit tout de suite.'
+  );
+}
+
+function onEditNegociation_(e) {
+  if (!e || !e.range) return;
+
+  const range = e.range;
+  const sheet = range.getSheet();
+
+  if (sheet.getName() !== NEGO_SHEET_NAME) return;
+
+  const row = range.getRow();
+  const col = range.getColumn();
+
+  if (row < 6 || col < 10 || col > 12) return;
+  if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
+  if (range.getValue() !== true) return;
+
+  const nom = String(sheet.getRange(row, 1).getValue() || '').trim();
+  const ss = e.source;
+
+  const decocher = function () { range.setValue(false); };
+  const avis = function (message) { ss.toast(message, 'EN NÉGOCIATION', 12); };
+
+  if (!nom || nom === NEGO_HEADERS[0]) {
+    decocher();
+    return;
+  }
+
+  const n = col === 10 ? 1 : (col === 11 ? 2 : 0);
+
+  // Confirmation avant toute action : sans réponse « Oui », rien ne part.
+  try {
+    const ui = SpreadsheetApp.getUi();
+    const question = n
+      ? 'Envoyer la relance ' + n + ' de confirmation d’ID à « ' + nom + ' » maintenant ?'
+      : 'Passer « ' + nom + ' » en partenaire actif ?';
+
+    if (ui.alert('Confirmer', question, ui.ButtonSet.YES_NO) !== ui.Button.YES) {
+      decocher();
+      return;
+    }
+  } catch (error) {
+    decocher();
+    avis('Confirmation impossible : rien n’a été fait. ' + safeError_(error));
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(30000)) {
+    decocher();
+    avis('Le moteur est occupé : réessayez dans une minute. Rien n’a été fait.');
+    return;
+  }
+
+  try {
+    assertRequiredHeaders_();
+
+    const context = getContext_();
+    const cle = normalizeName_(nom);
+    const index = context.rows.findIndex(function (r) {
+      return normalizeName_(r['Nom du SaaS']) === cle;
+    });
+
+    if (index === -1) {
+      decocher();
+      avis('« ' + nom + ' » introuvable dans Prospection : rien n’a été fait.');
+      return;
+    }
+
+    if (!n) {
+      writeFields_(context, CONFIG.FIRST_DATA_ROW + index, { 'Voix ajoutée (confirmée)': true });
+      migrateConfirmedPartners_(context);
+      majSuiviOui_(context);
+      avis('« ' + nom + ' » est maintenant dans Partenaires actifs.');
+      return;
+    }
+
+    if (getBoolSetting_('MASTER_PAUSE')) {
+      decocher();
+      avis('⏸ MASTER_PAUSE est à TRUE : aucune relance envoyée.');
+      return;
+    }
+
+    assertSenderAlias_();
+
+    const message = envoyerRelanceConfirmationID_(context, context.rows[index], index, n);
+
+    if (/envoyée ✅|déjà envoyée/.test(message)) {
+      range.setValue(true);
+    } else {
+      decocher();
+    }
+
+    avis(message);
+  } catch (error) {
+    decocher();
+    avis('Erreur, rien n’a été envoyé : ' + safeError_(error));
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // Menu : applique tout de suite les cases « Partenariat activé » cochées dans
