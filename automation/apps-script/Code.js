@@ -5659,7 +5659,34 @@ function processFollowUpsOpp_(context) {
     const recipient = String(row['Email public'] || '').trim();
     const sentAt = new Date(row['Date 1er contact']);
     const age = daysBetween_(sentAt, now);
+
+    // Relance seulement si due (même principe que processFollowUps_, moteur
+    // SaaS) : pas la peine de résoudre le fil Gmail (ni de bloquer la ligne)
+    // pour une relance qui n'a pas encore atteint son délai.
+    const due2 = getBoolSetting_('FOLLOWUP_2_ENABLED_OPP') &&
+      age >= getNumberSetting_('RELANCE_OPP_J2', 9) && !row['Relance 2 envoyée'];
+    const due1 = age >= getNumberSetting_('RELANCE_OPP_J1', 4) && !row['Relance 1 envoyée'];
+    if (!due2 && !due1) continue;
+
     const thread = getThreadSafely_(row['ID conversation']);
+
+    // 26/10/2026 : même correctif que processFollowUps_ (moteur SaaS, voir
+    // plus haut) — sans ce garde-fou, une ligne due dont le fil Gmail est
+    // introuvable (ID enregistré mais introuvable côté Gmail) relance
+    // indéfiniment à chaque passage horaire : sendFollowUp_ rejette l'envoi
+    // (« Conversation introuvable »), mais 'À relancer' restait TRUE, donc
+    // la ligne était retentée toutes les heures, pour rien, depuis son
+    // premier contact. Repéré ce passage : Wizz, Parallel Studio, Wonder
+    // Seconds, Blackmeal (tous premier contact du 20/10) bloqués ainsi
+    // depuis plusieurs jours.
+    if (!thread) {
+      writeFieldsOpp_(context, sheetRow, {
+        'À relancer': false,
+        'État envoi': 'Relance impossible — fil Gmail introuvable',
+        'Erreur envoi': 'Conversation introuvable : relance bloquée (à traiter à la main si besoin).'
+      });
+      continue;
+    }
 
     try {
       if (
@@ -5703,6 +5730,7 @@ function processFollowUpsOpp_(context) {
         remaining--;
       }
     } catch (error) {
+      logJournal_('relance', '❌ ' + String(row['Nom'] || ''), safeError_(error));
       writeFieldsOpp_(context, sheetRow, {
         'État envoi': 'Erreur relance',
         'Erreur envoi': safeError_(error)
