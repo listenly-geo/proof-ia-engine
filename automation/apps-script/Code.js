@@ -1554,11 +1554,21 @@ function processProspectionMachineNow() {
 function runMachine_(force) {
   const lock = LockService.getScriptLock();
 
-  if (!lock.tryLock(30000)) return;
+  // 26/10/2026 : chaque déclenchement laisse une trace (qui l'a lancé, verrou, erreur),
+  // pour ne plus jamais avoir un passage « silencieux » comme les 24-26/10.
+  let who = '';
+  try { who = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail(); } catch (e) { who = '?'; }
+  logJournal_('passage', '⏯️ déclenché', 'compte=' + who + (force ? ' (forcé)' : ''));
+
+  if (!lock.tryLock(30000)) {
+    logJournal_('passage', '⏭️ verrou occupé : passage sauté', 'un autre passage (réponses IA, opportunités ou watchdog) tenait le verrou');
+    return;
+  }
 
   try {
     runMachineBody_(force);
   } catch (error) {
+    logJournal_('passage', '⚠️ erreur moteur SaaS', safeError_(error));
     // Avant : une erreur ici (alias Gmail manquant, en-tête supprimé, etc.)
     // disparaissait silencieusement — aucune trace nulle part, et le moteur
     // restait bloqué des heures sans que personne ne le sache. Désormais
