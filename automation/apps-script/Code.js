@@ -2095,9 +2095,44 @@ function processFollowUps_(context) {
     const sentAt = new Date(row['Date envoi']);
     const age = daysBetween_(sentAt, now);
 
-    const thread = getThreadSafely_(
+    // 26/10/2026 : on ne touche à Gmail et on n'attend 18 s QUE pour une relance
+    // réellement due. Avant, les lignes sans fil Gmail retrouvable attendaient 18 s
+    // chacune puis échouaient, ce qui bloquait tout le passage (limite 6 min)
+    // avant les premiers mails.
+    const due2 = getBoolSetting_('FOLLOWUP_2_ENABLED') &&
+      age >= CONFIG.FOLLOW_UP_2_DAYS && !row['Relance 2 envoyée'];
+    const due1 = age >= CONFIG.FOLLOW_UP_1_DAYS && !row['Relance 1 envoyée'];
+    if (!due2 && !due1) continue;
+
+    let thread = getThreadSafely_(
       row['ID conversation']
     );
+
+    if (!thread && isValidEmail_(recipient)) {
+      // Fil non enregistré : on le retrouve dans les envoyés (une seule recherche).
+      try {
+        const found = GmailApp.search('in:sent to:' + recipient + ' newer_than:90d', 0, 1);
+        if (found.length) {
+          thread = found[0];
+          writeFields_(context, sheetRow, { 'ID conversation': thread.getId() });
+        }
+      } catch (searchError) {
+        if (isGmailQuotaError_(searchError)) {
+          gererErreurQuotaGmail_(searchError);
+          break;
+        }
+      }
+    }
+
+    if (!thread) {
+      // Introuvable : on n'envoie rien (règle de sécurité) et on ne réessaie plus.
+      writeFields_(context, sheetRow, {
+        'À relancer': false,
+        'État envoi': 'Relance impossible — fil Gmail introuvable',
+        'Erreur envoi': 'Conversation introuvable : relance bloquée (à traiter à la main si besoin).'
+      });
+      continue;
+    }
 
     try {
       if (
