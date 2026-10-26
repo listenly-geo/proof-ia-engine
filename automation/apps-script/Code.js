@@ -1592,8 +1592,18 @@ function runMachineBody_(force) {
     }
 
     if (force || inSendWindow_()) {
+      // Observabilité (26/10/2026) : début et fin de passage visibles dans Journal script.
+      let budgetLog = '';
+      try {
+        budgetLog = 'quota=' + MailApp.getRemainingDailyQuota() + ', budget 1ers mails=' +
+          budgetPasse_(getNumberSetting_('MAX_SENDS_PER_RUN', 15)) +
+          ', pause douce=' + cooldownRestantMin_() + ' min';
+      } catch (e) { budgetLog = 'lecture quota impossible'; }
+      logJournal_('passage', '▶️ début', budgetLog);
+
       processFollowUps_(context);
       processIntegrationReminders_(context);
+      logJournal_('passage', '… relances terminées', 'début des premiers mails');
 
       // La pause automatique sur rebonds a été retirée (2026-10-11) : la
       // vérification d'adresse MyEmailVerifier avant chaque envoi (voir
@@ -1605,6 +1615,8 @@ function runMachineBody_(force) {
     }
 
     const after = counters_(context);
+    logJournal_('passage', '⏹️ fin', 'premiers mails +' + (after.sent - before.sent) +
+      ', relances +' + (after.fu - before.fu));
 
     if (
       after.sent !== before.sent ||
@@ -1927,6 +1939,7 @@ function processInitialQueue_(context, cap) {
 
       remaining--;
     } catch (error) {
+      logJournal_('premier mail', '❌ ' + String(row['Nom du SaaS'] || ''), safeError_(error));
       if (!sent && isSoftRefusal_(error)) {
         // Refus doux (pause, quota, rafale) : la ligne reste en file, on arrête ce passage.
         writeFields_(context, sheetRow, { 'Envoyer': true });
@@ -2192,6 +2205,7 @@ function processFollowUps_(context) {
         remaining--;
       }
     } catch (error) {
+      logJournal_('relance', '❌ ' + String(row['Nom du SaaS'] || ''), safeError_(error));
       if (isSoftRefusal_(error)) break;
       if (isGmailQuotaError_(error)) {
         gererErreurQuotaGmail_(error);
