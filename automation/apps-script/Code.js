@@ -5909,7 +5909,38 @@ function processReplyAgentQueue_(context) {
   // traité normalement.
   const ignoreBefore = toDate_(getSetting_('REPLY_AGENT_IGNORE_BEFORE'));
 
-  for (let i = 0; i < context.rows.length; i++) {
+  // 26/10/2026 (correctif autonome) : cette boucle appelle Gmail (lecture du
+  // fil) pour quasiment CHAQUE ligne de Prospection (960+ aujourd'hui, en
+  // croissance de 50/jour). Avant ce correctif, elle parcourait TOUTES les
+  // lignes à chaque passage de 10 min (déclencheur processReplyAgentMachine),
+  // sans aucune limite de temps. Avec la croissance de la liste, un passage a
+  // fini par prendre presque les 10 minutes entières, laissant trop peu de
+  // fenêtre pour que le passage horaire principal (runMachine_, tryLock 30s)
+  // et le watchdog (tryLock 10s) obtiennent jamais le verrou de script —
+  // d'où le blocage observé le 26/10 à partir de 15h (voir Journal script :
+  // "verrou occupé" en continu, 0 premier mail envoyé pendant des heures en
+  // pleine plage d'envoi). Le correctif borne chaque passage à un budget de
+  // temps et REPREND au prochain passage là où il s'est arrêté (rotation),
+  // pour garantir que toutes les lignes sont vues au fil des passages sans
+  // jamais monopoliser le verrou. Aucune autre logique n'est modifiée.
+  const REPLY_AGENT_TIME_BUDGET_MS = 4 * 60 * 1000;
+  const replyAgentStartedAt = Date.now();
+  const totalRows = context.rows.length;
+  const rotationProps = PropertiesService.getScriptProperties();
+  let rotationStart = Number(rotationProps.getProperty('REPLY_AGENT_ROTATION_INDEX') || 0);
+  if (!isFinite(rotationStart) || rotationStart < 0 || rotationStart >= totalRows) rotationStart = 0;
+
+  let replyAgentRowsChecked = 0;
+  let replyAgentStoppedEarly = false;
+  let i = rotationStart;
+
+  for (let seen = 0; seen < totalRows; seen++, i = (i + 1) % totalRows) {
+    if (Date.now() - replyAgentStartedAt > REPLY_AGENT_TIME_BUDGET_MS) {
+      replyAgentStoppedEarly = true;
+      break;
+    }
+
+    replyAgentRowsChecked++;
     const row = context.rows[i];
 
     if (!row['ID conversation']) continue;
@@ -6137,6 +6168,16 @@ function processReplyAgentQueue_(context) {
       'Envoi réponse prévu': new Date(Date.now() + delay * 60000),
       'Dernier message IA (ID)': String(reply.id || '')
     }, confirmationFields));
+  }
+
+  // Reprise (rotation) : la prochaine exécution repart de la ligne suivante,
+  // jamais depuis le début, pour que toutes les lignes soient vues au fil
+  // des passages même quand le budget de temps est atteint avant la fin.
+  rotationProps.setProperty('REPLY_AGENT_ROTATION_INDEX', String(i));
+
+  if (replyAgentStoppedEarly) {
+    logJournal_('réponses IA', 'ℹ️ budget de temps atteint', replyAgentRowsChecked +
+      ' ligne(s) vérifiée(s) sur ' + totalRows + ', reprise au prochain passage');
   }
 }
 
