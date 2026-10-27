@@ -1972,8 +1972,37 @@ function processInitialQueue_(context, cap) {
   }
 }
 
+// 27/10/2026 (correctif autonome) : cette boucle appelait GmailApp.getThreadById
+// (+ lecture des messages via hasExternalReply_) pour QUASIMENT CHAQUE ligne de
+// Prospection ayant un ID conversation (plusieurs centaines aujourd'hui), à
+// CHAQUE passage horaire, et c'est la toute première chose que fait
+// runMachineBody_ (avant même le log "▶️ début" et les premiers mails/relances).
+// Même cause que le correctif déjà déployé sur processReplyAgentQueue_
+// (commit 451ab86, 26/10) : sans limite de temps, le passage pouvait prendre
+// plusieurs minutes avant d'atteindre l'envoi, ce qui explique l'absence totale
+// de logs "▶️ début"/"⏹️ fin" et 0 premier mail envoyé toute la matinée du
+// 27/10 malgré une fenêtre d'envoi ouverte et un quota Gmail sain (99/100).
+// Même borne de temps + reprise par rotation, sans toucher à la logique de
+// détection elle-même.
 function detectReplies_(context) {
-  for (let i = 0; i < context.rows.length; i++) {
+  const DETECT_REPLIES_TIME_BUDGET_MS = 90 * 1000;
+  const startedAt = Date.now();
+  const totalRows = context.rows.length;
+  const rotationProps = PropertiesService.getScriptProperties();
+  let rotationStart = Number(rotationProps.getProperty('DETECT_REPLIES_ROTATION_INDEX') || 0);
+  if (!isFinite(rotationStart) || rotationStart < 0 || rotationStart >= totalRows) rotationStart = 0;
+
+  let checked = 0;
+  let stoppedEarly = false;
+  let i = rotationStart;
+
+  for (let seen = 0; seen < totalRows; seen++, i = (i + 1) % totalRows) {
+    if (Date.now() - startedAt > DETECT_REPLIES_TIME_BUDGET_MS) {
+      stoppedEarly = true;
+      break;
+    }
+
+    checked++;
     const row = context.rows[i];
 
     if (
@@ -2003,6 +2032,16 @@ function detectReplies_(context) {
         'Prochaine relance': ''
       }
     );
+  }
+
+  // Reprise (rotation) : le prochain passage repart de la ligne suivante,
+  // jamais depuis le début, pour que toutes les lignes soient vues au fil
+  // des passages même quand le budget de temps est atteint avant la fin.
+  rotationProps.setProperty('DETECT_REPLIES_ROTATION_INDEX', String(i));
+
+  if (stoppedEarly) {
+    logJournal_('réponses', 'ℹ️ détection réponses : budget de temps atteint',
+      checked + ' ligne(s) vérifiée(s) sur ' + totalRows + ', reprise au prochain passage');
   }
 }
 
