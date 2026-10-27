@@ -6672,7 +6672,17 @@ function copierReponsesRecues_(context) {
     sheet.getRange(1, 1, 1, REPONSES_HEADERS.length).setValues([REPONSES_HEADERS]);
   } else if (lastRow >= 2) {
     sheet.getRange(2, 1, lastRow - 1, REPONSES_HEADERS.length).getValues().forEach(function (r) {
-      existing[String(r[7]) + '|' + String(r[1])] = true;
+      // Google Sheets convertit automatiquement une chaine "yyyy-MM-dd HH:mm"
+      // ecrite dans une cellule en date (Apps Script la relit alors comme un
+      // objet Date, pas comme la chaine d'origine) : sans cette normalisation,
+      // la cle de deduplication ne correspondait jamais a celle recalculee
+      // plus bas (via Utilities.formatDate), et CHAQUE reponse deja copiee
+      // etait reinseree a chaque passage horaire depuis le 20/10/2026 (environ
+      // 30 reponses dupliquees une trentaine de fois). Repere le 27/10/2026.
+      const dateCopieeKey = (r[1] instanceof Date)
+        ? Utilities.formatDate(r[1], CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm')
+        : String(r[1]);
+      existing[String(r[7]) + '|' + dateCopieeKey] = true;
     });
   }
 
