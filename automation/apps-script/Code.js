@@ -2016,9 +2016,35 @@ function detectReplies_(context) {
       row['ID conversation']
     );
 
-    if (!thread || !hasExternalReply_(thread)) {
+    if (!thread) continue;
+
+    // 27/10/2026 : thread.getMessages() (appelé par hasExternalReply_, et au
+    // premier appel GmailApp.getAliases() via getOwnAddresses_) peut échouer
+    // même quand getThreadById a réussi (quota Gmail atteint ENTRE les deux
+    // appels, surtout en fin de journée avec ~1000 lignes revérifiées). Avant
+    // ce correctif, l'erreur n'était interceptée nulle part ici et remontait
+    // jusqu'à runMachine_, qui annulait alors TOUT le passage — y compris
+    // l'envoi des premiers mails/relances plus bas dans runMachineBody_, même
+    // quand leur propre quota d'envoi (MailApp) était intact. Repéré le
+    // 27/10/2026, passage 16h01 : "erreur moteur SaaS — Trop d'appels... :
+    // gmail." journalisé AVANT même le log "▶️ début" (donc 0 envoi ce
+    // passage sans aucune cause réelle côté envoi). Même traitement que
+    // processFollowUps_ pour la même erreur : pause douce via
+    // gererErreurQuotaGmail_ et arrêt propre de CETTE détection, jamais une
+    // exception qui remonte plus haut.
+    let hasReply;
+    try {
+      hasReply = hasExternalReply_(thread);
+    } catch (error) {
+      logJournal_('réponses', '❌ détection réponse', safeError_(error));
+      if (isGmailQuotaError_(error)) {
+        gererErreurQuotaGmail_(error);
+        break;
+      }
       continue;
     }
+
+    if (!hasReply) continue;
 
     writeFields_(
       context,
@@ -5623,7 +5649,24 @@ function detectRepliesOpp_(context) {
 
     const thread = getThreadSafely_(row['ID conversation']);
 
-    if (!thread || !hasExternalReply_(thread)) continue;
+    if (!thread) continue;
+
+    // Même correctif que detectReplies_ (27/10/2026) : une erreur Gmail ici
+    // (ex. quota "Trop d'appels...") ne doit jamais remonter et annuler tout
+    // le passage Opportunités, y compris l'envoi plus bas dans ce même passage.
+    let hasReply;
+    try {
+      hasReply = hasExternalReply_(thread);
+    } catch (error) {
+      logJournal_('réponses', '❌ détection réponse (Opportunités)', safeError_(error));
+      if (isGmailQuotaError_(error)) {
+        gererErreurQuotaGmail_(error);
+        break;
+      }
+      continue;
+    }
+
+    if (!hasReply) continue;
 
     writeFieldsOpp_(context, OPP_CONFIG.FIRST_DATA_ROW + i, {
       'À relancer': false,
