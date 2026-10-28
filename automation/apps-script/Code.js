@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-10-20-garde-fou-doublon-lecture-sheet-fraiche'
+  CODE_VERSION: '2026-10-28-cadence-reponses-ia-30min-7h21h-anti-quota-gmail'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -5864,6 +5864,12 @@ function processFollowUpsOpp_(context) {
 
 const REPLY_AGENT_HANDLERS = ['processReplyAgentMachine'];
 
+// 28/10/2026 (correctif autonome, pilote prospection) : identifiant de la
+// cadence voulue pour le déclencheur processReplyAgentMachine. Change ce
+// numéro si la cadence doit encore changer un jour : checkTriggers_ (watchdog)
+// réinstalle alors le déclencheur une seule fois, sans intervention manuelle.
+const REPLY_AGENT_CADENCE_VERSION_ = 'v2-30min-7h21h-20261028';
+
 function getReplyAgentPrompt_() {
   const prompt = getSetting_('REPLY_AGENT_PROMPT');
 
@@ -6337,6 +6343,20 @@ function assertReplyAgentHeaders_() {
 }
 
 function processReplyAgentMachine() {
+  // 28/10/2026 (correctif autonome) : ce passage tournait 24h/24 toutes les
+  // 10 min (144 passages/jour), ce qui épuisait le quota Gmail « Trop d'appels
+  // pour ce service aujourd'hui : gmail. » dès le milieu de matinée certains
+  // jours (Journal script : 17-19/10, 26/10, 27/10, 28/10) et déclenchait alors
+  // la pause douce partagée (gererErreurQuotaGmail_, jusqu'à 600 min, remise à
+  // zéro à CHAQUE nouvel appel Gmail en échec) qui bloquait TOUS les envois
+  // (1ers mails + relances) pour le reste de la journée, même quand le quota
+  // d'ENVOI (MailApp) restait intact. REPLY_AGENT_AUTO_SEND reste FALSE par
+  // défaut (aucun envoi auto la nuit, uniquement des brouillons relus par
+  // Etienne) : vérifier les réponses entre 21h et 7h n'apporte donc rien et ne
+  // coûte que du quota Gmail. Voir aussi REPLY_AGENT_CADENCE_VERSION_.
+  const parisHour = Number(Utilities.formatDate(new Date(), 'Europe/Paris', 'H'));
+  if (parisHour < 7 || parisHour >= 21) return;
+
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) return;
 
@@ -6414,10 +6434,17 @@ function skipExistingRepliesNow_() {
 function installReplyAgentTriggers_() {
   removeReplyAgentTriggers_();
 
+  // 28/10/2026 : 30 min (au lieu de 10) + fenêtre 7h-21h (voir
+  // processReplyAgentMachine) pour ne plus épuiser le quota Gmail « Trop
+  // d'appels... » en milieu de matinée.
   ScriptApp.newTrigger('processReplyAgentMachine')
     .timeBased()
-    .everyMinutes(10)
+    .everyMinutes(30)
     .create();
+
+  PropertiesService.getScriptProperties().setProperty(
+    'REPLY_AGENT_CADENCE_VERSION', REPLY_AGENT_CADENCE_VERSION_
+  );
 }
 
 function removeReplyAgentTriggers_() {
@@ -7103,30 +7130,48 @@ function checkTriggers_() {
 
   if (!missing.length) {
     logJournal_('déclencheurs', '✅ OK', expected.length + ' présents');
-    return;
+  } else {
+    if (
+      missing.indexOf('processProspectionMachine') !== -1 ||
+      missing.indexOf('discoverProspectsDaily') !== -1 ||
+      missing.indexOf('sendDailyReport') !== -1
+    ) {
+      installTriggers_();
+    }
+
+    if (missing.indexOf('processOpportunitesMachine') !== -1) {
+      installTriggersOpp_();
+    }
+
+    if (missing.indexOf('processReplyAgentMachine') !== -1) {
+      installReplyAgentTriggers_();
+    }
+
+    if (missing.indexOf(WATCHDOG_HANDLER) !== -1) {
+      installWatchdogTrigger_();
+    }
+
+    logJournal_('déclencheurs', '⚠️ recréés', missing.join(', '));
   }
 
+  // 28/10/2026 (correctif autonome) : le déclencheur processReplyAgentMachine
+  // peut être PRÉSENT mais encore réglé sur l'ancienne cadence (10 min,
+  // 24h/24) si le code vient d'être mis à jour — ce bloc tourne donc aussi
+  // quand rien n'est « manquant » ci-dessus. Réinstallation UNE SEULE fois :
+  // REPLY_AGENT_CADENCE_VERSION empêche toute réinstallation répétée inutile.
   if (
-    missing.indexOf('processProspectionMachine') !== -1 ||
-    missing.indexOf('discoverProspectsDaily') !== -1 ||
-    missing.indexOf('sendDailyReport') !== -1
+    missing.indexOf('processReplyAgentMachine') === -1 &&
+    PropertiesService.getScriptProperties().getProperty('REPLY_AGENT_CADENCE_VERSION') !==
+      REPLY_AGENT_CADENCE_VERSION_
   ) {
-    installTriggers_();
-  }
-
-  if (missing.indexOf('processOpportunitesMachine') !== -1) {
-    installTriggersOpp_();
-  }
-
-  if (missing.indexOf('processReplyAgentMachine') !== -1) {
     installReplyAgentTriggers_();
+    logJournal_(
+      'déclencheurs',
+      '🔁 cadence réponses IA mise à jour',
+      "processReplyAgentMachine : 10 min 24h/24 -> 30 min, fenêtre 7h-21h Paris " +
+        "(correctif anti quota Gmail 'Trop d'appels...')"
+    );
   }
-
-  if (missing.indexOf(WATCHDOG_HANDLER) !== -1) {
-    installWatchdogTrigger_();
-  }
-
-  logJournal_('déclencheurs', '⚠️ recréés', missing.join(', '));
 }
 
 // Détecte un blocage de quota Gmail aujourd'hui : compte les lignes en
