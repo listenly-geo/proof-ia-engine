@@ -2490,7 +2490,34 @@ function cooldownRaison_() {
 
 // Erreur Gmail de quota pendant un envoi : pause douce croissante (60 min, puis
 // 120, puis jusqu'au lendemain) ; le rythme repart prudemment via la sonde existante.
+//
+// 29/10/2026 (correctif autonome — remplace l'additif AutoHealCooldown.js du même
+// jour, laissé en place comme filet de sécurité, par un vrai correctif ici) :
+// cette fonction est appelée à la fois après un échec d'ENVOI réel
+// (GmailApp.sendEmail, quota "Email" épuisé) et après un échec de LECTURE Gmail
+// sans rapport avec l'envoi (GmailApp.search / thread.getMessages, pendant
+// detectReplies_ / detectRepliesOpp_ / recherche de fil pour une relance ; quota
+// "Gmail" épuisé) — et jusqu'ici les deux posaient la MÊME pause douce partagée,
+// qui bloque TOUS les envois via budgetPasse_ (cooldownRestantMin_). Apps Script
+// nomme le service en cause dans le message d'erreur lui-même ("Trop d'appels
+// pour ce service aujourd'hui : email." contre "...: gmail." — confirmé par le
+// Journal script : les échecs d'ENVOI disent "email.", les échecs de DÉTECTION/
+// RECHERCHE disent "gmail."). Observé à plusieurs reprises (17-19/10, 26-29/10) :
+// 0 envoi pendant plusieurs heures en pleine plage d'envoi malgré un quota
+// d'ENVOI resté intact (98-99/100) — seule la lecture (détection de réponses,
+// recherche de fil pour une relance) était en quota. Un vrai échec d'envoi
+// ("...: email.") pose toujours la pause ci-dessous ; un échec de LECTURE seule
+// ("...: gmail." sans "email") est désormais seulement journalisé, sans bloquer
+// l'envoi — aucun appel de cette fonction n'a eu besoin d'être modifié.
 function gererErreurQuotaGmail_(error) {
+  const msg = String(error && error.message || error);
+  const lectureSeule = /gmail/i.test(msg) && !/\bemail\b/i.test(msg);
+
+  if (lectureSeule) {
+    logJournal_('quota', 'ℹ️ quota de LECTURE Gmail (envoi non affecté)', safeError_(error));
+    return;
+  }
+
   const props = PropertiesService.getScriptProperties();
   const todayKey = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd');
   const key = 'QUOTA_HITS_' + todayKey;
