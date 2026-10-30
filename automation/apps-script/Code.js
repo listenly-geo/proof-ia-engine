@@ -1956,7 +1956,10 @@ function processInitialQueue_(context, cap) {
         break;
       }
       if (!sent && isGmailQuotaError_(error)) {
-        gererErreurQuotaGmail_(error);
+        // envoiReel=true : cette erreur vient d'un essai d'ENVOI réel
+        // (GmailApp.sendEmail juste au-dessus), jamais d'une simple lecture —
+        // voir le commentaire du 30/10/2026 sur gererErreurQuotaGmail_.
+        gererErreurQuotaGmail_(error, true);
         writeFields_(context, sheetRow, { 'Envoyer': true });
         break;
       }
@@ -2283,7 +2286,10 @@ function processFollowUps_(context) {
       logJournal_('relance', '❌ ' + String(row['Nom du SaaS'] || ''), safeError_(error));
       if (isSoftRefusal_(error)) break;
       if (isGmailQuotaError_(error)) {
-        gererErreurQuotaGmail_(error);
+        // envoiReel=true : erreur venant de sendFollowUp_ (thread.replyAll),
+        // un vrai essai d'ENVOI — voir le commentaire du 30/10/2026 sur
+        // gererErreurQuotaGmail_.
+        gererErreurQuotaGmail_(error, true);
         break;
       }
       writeFields_(context, sheetRow, {
@@ -2491,27 +2497,31 @@ function cooldownRaison_() {
 // Erreur Gmail de quota pendant un envoi : pause douce croissante (60 min, puis
 // 120, puis jusqu'au lendemain) ; le rythme repart prudemment via la sonde existante.
 //
-// 29/10/2026 (correctif autonome — remplace l'additif AutoHealCooldown.js du même
-// jour, laissé en place comme filet de sécurité, par un vrai correctif ici) :
-// cette fonction est appelée à la fois après un échec d'ENVOI réel
-// (GmailApp.sendEmail, quota "Email" épuisé) et après un échec de LECTURE Gmail
-// sans rapport avec l'envoi (GmailApp.search / thread.getMessages, pendant
-// detectReplies_ / detectRepliesOpp_ / recherche de fil pour une relance ; quota
-// "Gmail" épuisé) — et jusqu'ici les deux posaient la MÊME pause douce partagée,
-// qui bloque TOUS les envois via budgetPasse_ (cooldownRestantMin_). Apps Script
-// nomme le service en cause dans le message d'erreur lui-même ("Trop d'appels
-// pour ce service aujourd'hui : email." contre "...: gmail." — confirmé par le
-// Journal script : les échecs d'ENVOI disent "email.", les échecs de DÉTECTION/
-// RECHERCHE disent "gmail."). Observé à plusieurs reprises (17-19/10, 26-29/10) :
-// 0 envoi pendant plusieurs heures en pleine plage d'envoi malgré un quota
-// d'ENVOI resté intact (98-99/100) — seule la lecture (détection de réponses,
-// recherche de fil pour une relance) était en quota. Un vrai échec d'envoi
-// ("...: email.") pose toujours la pause ci-dessous ; un échec de LECTURE seule
-// ("...: gmail." sans "email") est désormais seulement journalisé, sans bloquer
-// l'envoi — aucun appel de cette fonction n'a eu besoin d'être modifié.
-function gererErreurQuotaGmail_(error) {
+// 30/10/2026 (correctif autonome — corrige le correctif du 29/10, qui a empêché
+// TOUT envoi pendant >14h, de 20h35 le 29/10 à ce passage) : le correctif du
+// 29/10 distinguait "échec d'ENVOI" de "échec de LECTURE seule" par le MOT dans
+// le message d'erreur ("email." contre "gmail."), en supposant qu'un vrai échec
+// d'envoi dirait toujours "email.". FAUX : ce fichier envoie exclusivement via
+// GmailApp.sendEmail / thread.replyAll (jamais MailApp.sendEmail) — et Apps
+// Script nomme TOUJOURS ce service "gmail" dans son message de quota, qu'il
+// s'agisse d'un envoi (GmailApp.sendEmail) ou d'une lecture (GmailApp.search,
+// thread.getMessages). Preuve dans Journal script ce matin (30/10, 08h05-10h14) :
+// "premier mail ❌ VoiceClone AI — Trop d'appels... : gmail." quatre fois de
+// suite — un vrai échec d'ENVOI, disant "gmail.", donc classé à tort "LECTURE
+// seule (envoi non affecté)" par le correctif du 29/10 : aucune pause posée,
+// aucune visibilité, le moteur retentait à l'identique à chaque passage sans
+// jamais réussir un seul envoi, pendant que le quota d'ENVOI (MailApp) restait
+// intact (98-99/100) — la distinction par MOT ne peut donc jamais fonctionner
+// ici. Corrigé en distinguant par SITE D'APPEL plutôt que par le texte de
+// l'erreur : les deux points d'appel qui suivent un vrai essai d'envoi
+// (GmailApp.sendEmail en premier mail, thread.replyAll en relance) passent
+// maintenant envoiReel=true et posent TOUJOURS la pause ci-dessous ; les points
+// d'appel purement en lecture (detectReplies_, detectRepliesOpp_, recherche de
+// fil pour une relance) ne passent rien (envoiReel reste false par défaut) et
+// gardent l'ancien comportement : journalisé seulement, sans bloquer l'envoi.
+function gererErreurQuotaGmail_(error, envoiReel) {
   const msg = String(error && error.message || error);
-  const lectureSeule = /gmail/i.test(msg) && !/\bemail\b/i.test(msg);
+  const lectureSeule = !envoiReel && /gmail/i.test(msg) && !/\bemail\b/i.test(msg);
 
   if (lectureSeule) {
     logJournal_('quota', 'ℹ️ quota de LECTURE Gmail (envoi non affecté)', safeError_(error));
