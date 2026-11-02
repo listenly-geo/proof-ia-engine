@@ -2976,7 +2976,7 @@ function onEditNegociation_(e) {
   const row = range.getRow();
   const col = range.getColumn();
 
-  if (row < 6 || col < 10 || col > 12) return;
+  if (row < 6 || col < 11 || col > 13) return;
   if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
   if (range.getValue() !== true) return;
 
@@ -2991,7 +2991,7 @@ function onEditNegociation_(e) {
     return;
   }
 
-  const n = col === 10 ? 1 : (col === 11 ? 2 : 0);
+  const n = col === 11 ? 1 : (col === 12 ? 2 : 0);
 
   // Confirmation avant toute action : sans réponse « Oui », rien ne part.
   try {
@@ -6879,9 +6879,9 @@ const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
 const NEGO_NCOL = 13;
 const NEGO_HEADERS = [
-  'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action',
+  'Nom du SaaS', 'Email', 'Catégorie', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action',
   'Conversation Gmail', 'Brouillon (Prospection)', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
-  'Partenariat activé', 'Catégorie'
+  'Partenariat activé'
 ];
 
 // Relance de confirmation d'ID envoyée À LA DEMANDE (case « Relance 1 / 2 » cochée
@@ -6934,8 +6934,8 @@ function categorieNego_(cls) {
 
 function colorerCategorieNego_(sh, premiereLigne, lignes) {
   for (let k = 0; k < lignes.length; k++) {
-    const licencing = lignes[k][NEGO_NCOL - 1] === 'LICENCING';
-    sh.getRange(premiereLigne + k, NEGO_NCOL)
+    const licencing = lignes[k][2] === 'LICENCING';
+    sh.getRange(premiereLigne + k, 3)
       .setBackground(licencing ? '#1a73e8' : '#e91e8c')
       .setFontColor('#ffffff').setFontWeight('bold').setHorizontalAlignment('center');
   }
@@ -6958,9 +6958,9 @@ function majSuiviOui_(context, opts) {
     sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().forEach(function (line) {
       if (!line[0]) return;
       const cle = normalizeName_(line[0]);
-      if (line[9] === true) cocheesR1[cle] = true;
-      if (line[10] === true) cocheesR2[cle] = true;
-      if (line[11] === true) cochees[cle] = true;
+      if (line[10] === true) cocheesR1[cle] = true;
+      if (line[11] === true) cocheesR2[cle] = true;
+      if (line[12] === true) cochees[cle] = true;
     });
   }
 
@@ -7014,6 +7014,7 @@ function majSuiviOui_(context, opts) {
     const ligne = [
       String(row['Nom du SaaS']),
       String(row['Email public'] || ''),
+      categorieNego_(cls),
       cls,
       row['Dernière réponse'] ? String(row['Dernière réponse']) : '',
       idEnvoye ? 'Oui' : 'Non',
@@ -7023,8 +7024,7 @@ function majSuiviOui_(context, opts) {
       lienBrouillon,
       !!row['Relance intégration 1 envoyée'] || cocheesR1[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 2 envoyée'] || cocheesR2[normalizeName_(row['Nom du SaaS'])] === true,
-      false,
-      categorieNego_(cls)
+      false
     ];
     if (idEnvoye) {
       ligne[6] = 'Rien à faire : attendre l\'ajout de la voix';
@@ -7068,7 +7068,7 @@ function majSuiviOui_(context, opts) {
   if (envoye.length) {
     sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, 10, envoye.length, 3).insertCheckboxes();
+    sh.getRange(r, 11, envoye.length, 3).insertCheckboxes();
     colorerCategorieNego_(sh, r, envoye);
     r += envoye.length;
   } else {
@@ -7086,17 +7086,17 @@ function majSuiviOui_(context, opts) {
   if (aValider.length) {
     sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
-    sh.getRange(r, 10, aValider.length, 3).insertCheckboxes();
+    sh.getRange(r, 11, aValider.length, 3).insertCheckboxes();
     colorerCategorieNego_(sh, r, aValider);
   }
 
-  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180, 150, 150, 140, 130];
+  const widths = [200, 220, 130, 200, 120, 90, 300, 320, 180, 180, 150, 150, 140];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
   sh.setRowHeight(4, 36);
   sh.getRange(1, 1, r + aValider.length, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
-  sh.getRange(1, 8, r + aValider.length, 2).setFontColor('#1155cc');
+  sh.getRange(1, 9, r + aValider.length, 2).setFontColor('#1155cc');
 
   return resultats;
 }
