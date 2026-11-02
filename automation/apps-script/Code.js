@@ -6877,11 +6877,11 @@ function watchdogRun() {
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
-const NEGO_NCOL = 10;
+const NEGO_NCOL = 11;
 const NEGO_HEADERS = [
   'Nom du SaaS', 'Email', 'Catégorie', 'ID envoyé', 'Statut actuel', 'Action',
   'Conversation Gmail', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
-  'Partenariat activé'
+  'Partenariat activé', 'Réponse envoyée (à la main)'
 ];
 
 // Relance de confirmation d'ID envoyée À LA DEMANDE (case « Relance 1 / 2 » cochée
@@ -6954,6 +6954,7 @@ function majSuiviOui_(context, opts) {
   const cochees = {};
   const cocheesR1 = {};
   const cocheesR2 = {};
+  const cocheesRep = {};
   if (sh.getLastRow() >= 6) {
     sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().forEach(function (line) {
       if (!line[0]) return;
@@ -6961,6 +6962,7 @@ function majSuiviOui_(context, opts) {
       if (line[7] === true) cocheesR1[cle] = true;
       if (line[8] === true) cocheesR2[cle] = true;
       if (line[9] === true) cochees[cle] = true;
+      if (line[10] === true) cocheesRep[cle] = true;
     });
   }
 
@@ -7021,7 +7023,8 @@ function majSuiviOui_(context, opts) {
       lienGmail,
       !!row['Relance intégration 1 envoyée'] || cocheesR1[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 2 envoyée'] || cocheesR2[normalizeName_(row['Nom du SaaS'])] === true,
-      false
+      false,
+      cocheesRep[normalizeName_(row['Nom du SaaS'])] === true
     ];
     if (idEnvoye) {
       ligne[5] = 'Rien à faire : attendre l\'ajout de la voix';
@@ -7065,7 +7068,7 @@ function majSuiviOui_(context, opts) {
   if (envoye.length) {
     sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, 8, envoye.length, 3).insertCheckboxes();
+    sh.getRange(r, 8, envoye.length, 4).insertCheckboxes();
     colorerCategorieNego_(sh, r, envoye);
     r += envoye.length;
   } else {
@@ -7083,11 +7086,11 @@ function majSuiviOui_(context, opts) {
   if (aValider.length) {
     sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
-    sh.getRange(r, 8, aValider.length, 3).insertCheckboxes();
+    sh.getRange(r, 8, aValider.length, 4).insertCheckboxes();
     colorerCategorieNego_(sh, r, aValider);
   }
 
-  const widths = [200, 220, 130, 90, 300, 320, 180, 150, 150, 140];
+  const widths = [200, 220, 130, 90, 300, 320, 180, 150, 150, 140, 170];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
