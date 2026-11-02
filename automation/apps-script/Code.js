@@ -7058,24 +7058,12 @@ function majSuiviOui_(context, opts) {
   sh.getRange(3, 1, 1, NEGO_NCOL).merge().setBackground('#f5f5f5').setFontColor('#555555').setFontStyle('italic')
     .setFontSize(10).setHorizontalAlignment('center');
 
-  // Ligne 4 volontairement vide : tout SaaS reste dans EN NÉGOCIATION tant que la voix n'est pas validée.
-  let r = 5;
-  sh.getRange(r, 1, 1, NEGO_NCOL).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
-    .setFontColor(NAVY).setFontSize(10);
-  r++;
-  if (envoye.length) {
-    sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
-      .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, 8, envoye.length, 4).insertCheckboxes();
-    colorerCategorieNego_(sh, r, envoye);
-    r += envoye.length;
-  } else {
-    sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
-    r++;
-  }
-
-  r++;
-  sh.getRange(r, 1, 1, NEGO_NCOL).merge().setValue('⏳ À VALIDER PAR ETIENNE : ID pas encore parti (' + aValider.length + ')')
+  // Une seule liste, sans ligne vide ni double en-tête : bandeau en ligne 4, en-tête en ligne 5,
+  // puis les SaaS à valider, et en dernier ceux dont l'ID est déjà parti (fal, aicut…).
+  // Tant que la voix n'est pas validée, aucun SaaS ne sort de cette liste.
+  let r = 4;
+  sh.getRange(r, 1, 1, NEGO_NCOL).merge()
+    .setValue('⏳ À VALIDER PAR ETIENNE : ' + (aValider.length + envoye.length) + ' SaaS en négociation')
     .setBackground(ROUGE).setFontColor('#ffffff').setFontWeight('bold').setFontSize(13).setHorizontalAlignment('left');
   r++;
   sh.getRange(r, 1, 1, NEGO_NCOL).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
@@ -7086,14 +7074,23 @@ function majSuiviOui_(context, opts) {
       .setFontColor('#1a1a1a');
     sh.getRange(r, 8, aValider.length, 4).insertCheckboxes();
     colorerCategorieNego_(sh, r, aValider);
+    r += aValider.length;
   }
+  if (envoye.length) {
+    sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
+      .setFontColor('#14532d').setFontSize(11);
+    sh.getRange(r, 8, envoye.length, 4).insertCheckboxes();
+    colorerCategorieNego_(sh, r, envoye);
+    r += envoye.length;
+  }
+  const derniereLigne = Math.max(r - 1, 5);
 
   const widths = [200, 220, 130, 90, 300, 320, 180, 170, 150, 150, 140];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
-  sh.getRange(1, 1, r + aValider.length, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
-  sh.getRange(1, 7, r + aValider.length, 1).setFontColor('#1155cc');
+  sh.getRange(1, 1, derniereLigne, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
+  sh.getRange(1, 7, derniereLigne, 1).setFontColor('#1155cc');
 
   return resultats;
 }
