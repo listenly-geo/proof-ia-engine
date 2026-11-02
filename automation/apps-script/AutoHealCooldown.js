@@ -1,72 +1,45 @@
 // 29/10/2026 — Correctif AUTONOME (pilote de prospection, mandat Etienne du
 // 19-20/10/2026), fichier AJOUTÉ au projet Apps Script en complément de
-// Code.js (NON modifié ici : une limite technique empêche ce pilote de
-// repousser le fichier Code.js complet — 270 Ko — en un seul appel d'outil
-// GitHub disponible ; le correctif complet est écrit et vérifié localement,
-// voir Journal script du 29/10/2026 pour le détail et le plan de suite).
+// Code.js, pour lever automatiquement une pause "quota Gmail atteint" posée
+// à tort par une erreur de LECTURE Gmail (detectReplies_, etc.) plutôt que
+// par un vrai échec d'envoi.
 //
-// CAUSE DU BLOCAGE CONSTATÉ (28-29/10/2026, 0 envoi pendant plusieurs
-// heures en pleine plage d'envoi) : une erreur de quota de LECTURE Gmail
-// ("Trop d'appels pour ce service aujourd'hui : gmail", renvoyée par
-// GmailApp.search / thread.getMessages pendant la détection des réponses)
-// est traitée par gererErreurQuotaGmail_ (dans Code.js) comme un échec
-// d'ENVOI, posant une pause douce ("quota Gmail atteint") qui bloque TOUS
-// les envois (premiers mails + relances) jusqu'à 600 minutes — alors que
-// le quota d'ENVOI réel (MailApp.getRemainingDailyQuota()) restait intact
-// (98-99/100) toute la matinée du 29/10. Vu dans Journal script : pause
-// reposée à 600 min à 08h03, 09h03, 10h03 et 10h11, "envoyés=0 attendu≈9"
-// à 10h09.
+// 02/11/2026 — DÉSACTIVÉ (correctif autonome, même mandat) : cause du
+// blocage total des envois constaté ce matin (09h03-10h23, 0 envoi malgré
+// plusieurs passages, "premier mail ❌ Wondershare Virbo : Trop d'appels
+// pour ce service aujourd'hui : gmail." répété à l'identique, Journal
+// script).
 //
-// CE CORRECTIF (additif, sans toucher à Code.js) : lève cette pause
-// UNIQUEMENT si (a) elle est actuellement active, (b) sa raison enregistrée
-// est exactement "quota Gmail atteint", et (c) le quota d'envoi réel est en
-// fait disponible (> 20). Il ne touche à AUCUNE autre propriété, ne modifie
-// aucun réglage de l'onglet Réglages, n'envoie aucun mail, et n'a aucun
-// effet si la pause est absente ou correctement justifiée (ex. un vrai
-// échec d'envoi). Jamais invoqué si MASTER_PAUSE ou toute autre règle de
-// sécurité serait concernée : ce correctif ne fait que corriger une pause
-// posée à tort par une erreur de LECTURE, rien d'autre.
+// CE QUI A CHANGÉ DEPUIS LE 29/10 (et rend ce correctif obsolète puis
+// nuisible) : le 30/10 (commit 70540ce), gererErreurQuotaGmail_ dans
+// Code.js a été corrigé pour distinguer un vrai échec d'ENVOI d'une simple
+// erreur de LECTURE par le SITE D'APPEL (GmailApp.sendEmail / thread.replyAll
+// => envoiReel=true) et non plus par le mot dans le message d'erreur. Depuis
+// ce correctif, la pause "quota Gmail atteint" (COOLDOWN_REASON) n'est PLUS
+// JAMAIS posée par une simple lecture (voir Code.js ~ligne 2522 :
+// lectureSeule => return, aucune pause) : elle ne peut plus provenir que
+// d'un vrai échec d'envoi. Le correctif ci-dessous, lui, levait CETTE pause
+// dès que MailApp.getRemainingDailyQuota() restait > 20 — ce qui est
+// TOUJOURS vrai ici, puisque le quota qui bloque réellement (appels Gmail
+// par jour, "Service invoked too many times") est distinct du quota
+// d'ENVOI (MailApp) : aucun mail n'étant réellement envoyé, MailApp reste
+// à 100/100 même quand Gmail refuse tout appel. Résultat observé ce matin
+// (Journal script) : la pause posée à 09h04 (120 min) et à 10h03 (600 min)
+// a été effacée par ce correctif 5-9 minutes plus tard (09h09, 10h09) à
+// chaque fois, avant même de ralentir un seul passage — d'où la boucle
+// (échec → pause → auto-heal l'efface → nouvel essai immédiat → échec...)
+// et 0 envoi malgré ~10 tentatives entre 09h03 et 10h23.
 //
-// DÉCLENCHEMENT : appelé une fois immédiatement ci-dessous (instruction de
-// portée globale — s'exécute à chaque invocation du projet, comportement
-// standard Apps Script : le code de portée globale de TOUS les fichiers du
-// projet s'exécute à chaque appel de n'importe quel déclencheur existant),
-// donc actif dans les minutes suivant le déploiement, sans nouveau
-// déclencheur à installer. Également exécutable à la demande via le
-// workflow GitHub "Déploiement MOTEUR PROOF IA" (workflow_dispatch,
-// action=test, function=autoHealCooldownGmail_).
+// Autrement dit : la condition qui justifiait ce correctif (une pause
+// "quota Gmail atteint" peut encore provenir à tort d'une lecture) n'existe
+// plus dans le code actuel. Toute pause "quota Gmail atteint" aujourd'hui
+// est donc légitime (vrai échec d'envoi) et doit être respectée jusqu'à son
+// terme — c'est exactement la règle (a) du mandat : "Quota Gmail atteint
+// aujourd'hui : ne rien monter ; le lendemain, reprendre au niveau des
+// envois réussis la veille." Ce fichier est conservé (historique, traçable
+// dans git) mais neutralisé : il ne touche plus à aucune propriété.
 function autoHealCooldownGmail_() {
-  var props = PropertiesService.getScriptProperties();
-  var until = Number(props.getProperty('COOLDOWN_UNTIL_MS') || 0);
-  if (until <= Date.now()) return;
-
-  var raison = props.getProperty('COOLDOWN_REASON') || '';
-  if (raison !== 'quota Gmail atteint') return;
-
-  try {
-    var quotaRestant = MailApp.getRemainingDailyQuota();
-    if (quotaRestant > 20) {
-      props.deleteProperty('COOLDOWN_UNTIL_MS');
-      props.deleteProperty('COOLDOWN_REASON');
-
-      try {
-        var ss = SpreadsheetApp.openById('1M5bSX3-Iq2Om8UXkOw3rAZUgKrnVrkwFAmnfzZOBHkY');
-        var sheet = ss.getSheetByName('Journal script');
-        if (sheet) {
-          sheet.appendRow([
-            Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyy-MM-dd HH:mm:ss'),
-            'auto-heal (additif 29/10)',
-            '✅ pause levée automatiquement',
-            'quota d\'envoi MailApp intact (' + quotaRestant + '/100) — AutoHealCooldown.js'
-          ]);
-        }
-      } catch (logError) {
-        // Le journal ne doit jamais faire planter ce correctif.
-      }
-    }
-  } catch (quotaError) {
-    // Lecture du quota impossible : par sécurité, on ne touche à rien.
-  }
+  return; // Désactivé le 02/11/2026 — voir commentaire ci-dessus.
 }
 
 try {
