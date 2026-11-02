@@ -7058,9 +7058,7 @@ function majSuiviOui_(context, opts) {
   sh.getRange(3, 1, 1, NEGO_NCOL).merge().setBackground('#f5f5f5').setFontColor('#555555').setFontStyle('italic')
     .setFontSize(10).setHorizontalAlignment('center');
 
-  sh.getRange(4, 1).setValue('✅ ID ENVOYÉ : en attente de l\'ajout de la voix (' + envoye.length + ')');
-  sh.getRange(4, 1, 1, NEGO_NCOL).merge().setBackground(TEAL).setFontColor('#ffffff').setFontWeight('bold')
-    .setFontSize(13).setHorizontalAlignment('left');
+  // Ligne 4 volontairement vide : tout SaaS reste dans EN NÉGOCIATION tant que la voix n'est pas validée.
   let r = 5;
   sh.getRange(r, 1, 1, NEGO_NCOL).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
     .setFontColor(NAVY).setFontSize(10);
@@ -7094,7 +7092,6 @@ function majSuiviOui_(context, opts) {
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
-  sh.setRowHeight(4, 36);
   sh.getRange(1, 1, r + aValider.length, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
   sh.getRange(1, 7, r + aValider.length, 1).setFontColor('#1155cc');
 
