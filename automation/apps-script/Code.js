@@ -2976,7 +2976,7 @@ function onEditNegociation_(e) {
   const row = range.getRow();
   const col = range.getColumn();
 
-  if (row < 6 || col < 8 || col > 10) return;
+  if (row < 6 || col < 9 || col > 11) return;
   if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
   if (range.getValue() !== true) return;
 
@@ -2991,7 +2991,7 @@ function onEditNegociation_(e) {
     return;
   }
 
-  const n = col === 8 ? 1 : (col === 9 ? 2 : 0);
+  const n = col === 9 ? 1 : (col === 10 ? 2 : 0);
 
   // Confirmation avant toute action : sans réponse « Oui », rien ne part.
   try {
@@ -6880,8 +6880,8 @@ const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
 const NEGO_NCOL = 11;
 const NEGO_HEADERS = [
   'Nom du SaaS', 'Email', 'Catégorie', 'ID envoyé', 'Statut actuel', 'Action',
-  'Conversation Gmail', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
-  'Partenariat activé', 'Réponse envoyée (à la main)'
+  'Conversation Gmail', 'Réponse envoyée (à la main)', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
+  'Partenariat activé'
 ];
 
 // Relance de confirmation d'ID envoyée À LA DEMANDE (case « Relance 1 / 2 » cochée
@@ -6959,10 +6959,10 @@ function majSuiviOui_(context, opts) {
     sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().forEach(function (line) {
       if (!line[0]) return;
       const cle = normalizeName_(line[0]);
-      if (line[7] === true) cocheesR1[cle] = true;
-      if (line[8] === true) cocheesR2[cle] = true;
-      if (line[9] === true) cochees[cle] = true;
-      if (line[10] === true) cocheesRep[cle] = true;
+      if (line[8] === true) cocheesR1[cle] = true;
+      if (line[9] === true) cocheesR2[cle] = true;
+      if (line[10] === true) cochees[cle] = true;
+      if (line[7] === true) cocheesRep[cle] = true;
     });
   }
 
@@ -7021,10 +7021,10 @@ function majSuiviOui_(context, opts) {
       statut.substring(0, 80) || '—',
       '',
       lienGmail,
+      cocheesRep[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 1 envoyée'] || cocheesR1[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 2 envoyée'] || cocheesR2[normalizeName_(row['Nom du SaaS'])] === true,
-      false,
-      cocheesRep[normalizeName_(row['Nom du SaaS'])] === true
+      false
     ];
     if (idEnvoye) {
       ligne[5] = 'Rien à faire : attendre l\'ajout de la voix';
@@ -7090,7 +7090,7 @@ function majSuiviOui_(context, opts) {
     colorerCategorieNego_(sh, r, aValider);
   }
 
-  const widths = [200, 220, 130, 90, 300, 320, 180, 150, 150, 140, 170];
+  const widths = [200, 220, 130, 90, 300, 320, 180, 170, 150, 150, 140];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
