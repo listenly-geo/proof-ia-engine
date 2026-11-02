@@ -6877,11 +6877,11 @@ function watchdogRun() {
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
-const NEGO_NCOL = 12;
+const NEGO_NCOL = 13;
 const NEGO_HEADERS = [
   'Nom du SaaS', 'Email', 'Type de réponse', 'Dernière réponse', 'ID envoyé', 'Statut actuel', 'Action',
   'Conversation Gmail', 'Brouillon (Prospection)', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
-  'Partenariat activé'
+  'Partenariat activé', 'Catégorie'
 ];
 
 // Relance de confirmation d'ID envoyée À LA DEMANDE (case « Relance 1 / 2 » cochée
@@ -6922,6 +6922,22 @@ function envoyerRelanceConfirmationID_(context, row, i, n) {
     return nom + ' : relance ' + n + ' envoyée ✅';
   } catch (error) {
     return nom + ' : non envoyée (' + safeError_(error) + ')';
+  }
+}
+
+// Catégorie affichée dans EN NÉGOCIATION (02/11/2026) : LICENCING (bleu) = le SaaS parle
+// licence / rémunération / partenariat commercial (classification G) ; PARTENARIAT (rose) =
+// le SaaS accepte d'ajouter la voix (A, B, F : ID, intégration, précisions).
+function categorieNego_(cls) {
+  return /^\s*G\b|COMMERCIAL|PARTNERSHIP/i.test(String(cls || '')) ? 'LICENCING' : 'PARTENARIAT';
+}
+
+function colorerCategorieNego_(sh, premiereLigne, lignes) {
+  for (let k = 0; k < lignes.length; k++) {
+    const licencing = lignes[k][NEGO_NCOL - 1] === 'LICENCING';
+    sh.getRange(premiereLigne + k, NEGO_NCOL)
+      .setBackground(licencing ? '#1a73e8' : '#e91e8c')
+      .setFontColor('#ffffff').setFontWeight('bold').setHorizontalAlignment('center');
   }
 }
 
@@ -7007,7 +7023,8 @@ function majSuiviOui_(context, opts) {
       lienBrouillon,
       !!row['Relance intégration 1 envoyée'] || cocheesR1[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 2 envoyée'] || cocheesR2[normalizeName_(row['Nom du SaaS'])] === true,
-      false
+      false,
+      categorieNego_(cls)
     ];
     if (idEnvoye) {
       ligne[6] = 'Rien à faire : attendre l\'ajout de la voix';
@@ -7051,7 +7068,8 @@ function majSuiviOui_(context, opts) {
   if (envoye.length) {
     sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, NEGO_NCOL - 2, envoye.length, 3).insertCheckboxes();
+    sh.getRange(r, 10, envoye.length, 3).insertCheckboxes();
+    colorerCategorieNego_(sh, r, envoye);
     r += envoye.length;
   } else {
     sh.getRange(r, 1).setValue('Aucun pour le moment.').setFontStyle('italic');
@@ -7068,10 +7086,11 @@ function majSuiviOui_(context, opts) {
   if (aValider.length) {
     sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
-    sh.getRange(r, NEGO_NCOL - 2, aValider.length, 3).insertCheckboxes();
+    sh.getRange(r, 10, aValider.length, 3).insertCheckboxes();
+    colorerCategorieNego_(sh, r, aValider);
   }
 
-  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180, 150, 150, 140];
+  const widths = [200, 220, 200, 120, 90, 300, 320, 180, 180, 150, 150, 140, 130];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
