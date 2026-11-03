@@ -1964,6 +1964,13 @@ function processInitialQueue_(context, cap) {
         writeFields_(context, sheetRow, { 'Envoyer': true });
         break;
       }
+      if (!sent && isDailyCapReached_(error)) {
+        // Plafond quotidien global déjà atteint (voir isDailyCapReached_) : ce
+        // prospect n'a rien de défectueux, on le laisse en file pour un
+        // prochain passage et on arrête ce passage-ci.
+        writeFields_(context, sheetRow, { 'Envoyer': true });
+        break;
+      }
       writeFields_(context, sheetRow, {
         'Envoyer': false,
         'À relancer': false,
@@ -2293,6 +2300,12 @@ function processFollowUps_(context) {
         gererErreurQuotaGmail_(error, true);
         break;
       }
+      if (isDailyCapReached_(error)) {
+        // Plafond quotidien global déjà atteint (voir isDailyCapReached_) :
+        // "À relancer" reste true (pas touché ici), on arrête juste ce passage
+        // au lieu de vider le budget d'exécution sur toute la file restante.
+        break;
+      }
       writeFields_(context, sheetRow, {
         'État envoi': 'Erreur relance',
         'Erreur envoi': safeError_(error)
@@ -2479,6 +2492,29 @@ function isSoftRefusal_(error) {
 function isGmailQuotaError_(error) {
   return /Trop d.appels|too many times|invoked too many|limit exceeded|quota/i.test(
     String(error && error.message || error));
+}
+
+// 03/11/2026 (correctif autonome, diagnostic pilote 16h35) : "plafond quotidien
+// atteint" (controleAvantEnvoi_, DAILY_LIMIT compté tous types confondus hors
+// Réponse IA) n'est ni un refus SOFT_PREFIX_ ni une erreur de quota Gmail, donc
+// retombait dans le catch générique de processInitialQueue_/processFollowUps_,
+// qui l'écrit comme une erreur PROPRE À CETTE LIGNE ("Erreur — vérifier Gmail
+// avant nouvel essai") et, pour les premiers mails, décoche définitivement
+// "Envoyer"/"À relancer" — alors que le prospect n'a rien de défectueux, c'est
+// juste le plafond du jour qui est atteint. Conséquence observée dans Journal
+// script : une fois le plafond touché, la boucle continuait sur TOUTES les
+// lignes restantes de la file (parfois des dizaines), les décochait une par
+// une avec le même message, et grignotait le budget d'exécution du passage au
+// détriment de la détection de réponses (detectReplies_ coupé à 291/1001,
+// 860/1001 lignes vérifiées le 03/11 16h03-16h23). Root cause probable : le
+// compteur "remaining" de processInitialQueue_ (countInitialSendsToday_, lignes
+// "Premier mail" du jour uniquement) peut rester > 0 alors que le compteur
+// global de controleAvantEnvoi_ (Journal envois, tous types hors Réponse IA)
+// a déjà atteint DAILY_LIMIT à cause des relances/opportunités envoyées le même
+// jour. Non corrigé ici (changerait ce que DAILY_LIMIT compte) : seul le
+// traitement de l'erreur est corrigé, à l'identique du refus SOFT_PREFIX_.
+function isDailyCapReached_(error) {
+  return String(error && error.message || error).indexOf('plafond quotidien atteint') === 0;
 }
 
 function setCooldown_(minutes, reason) {
