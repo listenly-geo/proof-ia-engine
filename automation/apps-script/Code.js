@@ -1606,22 +1606,23 @@ function runMachineBody_(force) {
       let budgetLog = '';
       try {
         budgetLog = 'quota=' + MailApp.getRemainingDailyQuota() + ', budget 1ers mails=' +
-          budgetPasse_(getNumberSetting_('MAX_SENDS_PER_RUN', 15)) +
+          budgetPasse_(getNumberSetting_('MAX_SENDS_PER_RUN', 15), true) +
           ', pause douce=' + cooldownRestantMin_() + ' min';
       } catch (e) { budgetLog = 'lecture quota impossible'; }
       logJournal_('passage', '▶️ début', budgetLog);
 
-      processFollowUps_(context);
-      processIntegrationReminders_(context);
-      logJournal_('passage', '… relances terminées', 'début des premiers mails');
-
+      // Ordre (03/11/2026) : les PREMIERS MAILS passent en premier, les relances ensuite.
       // La pause automatique sur rebonds a été retirée (2026-10-11) : la
       // vérification d'adresse MyEmailVerifier avant chaque envoi (voir
       // verifyEmailAddress_) est désormais la protection principale contre
       // les rebonds. Le nombre de rebonds récents reste calculé et affiché
       // dans le rapport quotidien (Historique / Synthèse), seulement pour
       // information — il ne bloque plus les envois.
-      processInitialQueue_(context, budgetPasse_(getNumberSetting_('MAX_SENDS_PER_RUN', 15)));
+      processInitialQueue_(context, budgetPasse_(getNumberSetting_('MAX_SENDS_PER_RUN', 15), true));
+      logJournal_('passage', '… premiers mails terminés', 'début des relances');
+
+      processFollowUps_(context);
+      processIntegrationReminders_(context);
     }
 
     const after = counters_(context);
@@ -2407,8 +2408,9 @@ function controleAvantEnvoi_(recipient, type, dedupe) {
   if (quotaRestant < 20) {
     return SOFT_PREFIX_ + 'quota Gmail épuisé pour aujourd\'hui (restant ' + quotaRestant + ')';
   }
+  // Priorité aux premiers mails (03/11/2026) : seule la relance laisse la réserve à tes réponses.
   const reserve = getNumberSetting_('QUOTA_RESERVE', 30);
-  if ((type === 'Premier mail' || type === 'Relance') && quotaRestant < 20 + reserve) {
+  if (type === 'Relance' && quotaRestant < 20 + reserve) {
     return SOFT_PREFIX_ + 'quota réservé à tes réponses (restant ' + quotaRestant + ', réserve ' + reserve + ')';
   }
 
@@ -2541,10 +2543,12 @@ function gererErreurQuotaGmail_(error, envoiReel) {
 
 // Budget d'envois pour CE passage : quota restant (moins la réserve) réparti sur
 // les heures restantes de la plage d'envoi, borné par la limite par passage.
-function budgetPasse_(cap) {
+// pourPremiers (03/11/2026) : les premiers mails n'attendent pas la réserve (seul le plancher de 20 reste),
+// les relances, elles, s'arrêtent au-dessus de la réserve.
+function budgetPasse_(cap, pourPremiers) {
   if (cooldownRestantMin_() > 0) return 0;
   const quota = MailApp.getRemainingDailyQuota();
-  const reserve = getNumberSetting_('QUOTA_RESERVE', 30);
+  const reserve = pourPremiers ? 0 : getNumberSetting_('QUOTA_RESERVE', 30);
   const dispo = Math.max(0, quota - 20 - reserve);
   const hour = Number(Utilities.formatDate(new Date(), 'Europe/Paris', 'H'));
   const endHour = getNumberSetting_('SEND_END_HOUR', 19);
