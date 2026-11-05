@@ -7311,7 +7311,17 @@ function sondeGmailApresBlocage_(todayKey) {
 // règles de sécurité ne sont jamais modifiés ici. Chaque changement est
 // journalisé. L'ajustement Postmaster (rapport quotidien) reste prioritaire
 // et peut ramener la limite vers le bas si la réputation baisse.
-function ajusterRythmeAuto_(sentToday, expectedByNow) {
+//
+// Ajout 05/11/2026 (pilote autonome) : avant de remonter, on vérifie le taux
+// de rebonds des 3 derniers jours (règle Etienne : > 5 % → baisser, jamais
+// remonter). Sans ce garde-fou, ce contrôle horaire effaçait en boucle la
+// baisse qualité décidée par le pilote dès que le retard réapparaissait —
+// observé les 02/11, 04/11, puis deux fois le 05/11 (10h09 et 11h09, à
+// seulement 34 min d'écart) dans Journal script, chaque fois annulé à la
+// main. La baisse elle-même reste décidée par le pilote (diagnostic plus
+// large que ce seul ratio) ; ici on se contente de ne plus remonter tant
+// que le taux est trop haut, ce qui arrête la bascule.
+function ajusterRythmeAuto_(sentToday, expectedByNow, context) {
   const ceiling = getNumberSetting_('MAX_SENDS_PER_RUN_CEILING', 15);
   const current = getNumberSetting_('MAX_SENDS_PER_RUN', 5);
 
@@ -7319,6 +7329,23 @@ function ajusterRythmeAuto_(sentToday, expectedByNow) {
     logJournal_('optimisation', 'ℹ️ plafond atteint',
       'MAX_SENDS_PER_RUN=' + current + ' (plafond ' + ceiling + ') — envoyés=' + sentToday + ' attendu≈' + expectedByNow);
     return;
+  }
+
+  if (context) {
+    const limit3j = Date.now() - 3 * 86400000;
+    const sent3j = context.rows.filter(function (row) {
+      const sentAt = toDate_(row['Date envoi']);
+      return sentAt && sentAt.getTime() >= limit3j;
+    }).length;
+    const bounces3j = recentBounceCount_(context);
+
+    if (sent3j > 0 && bounces3j / sent3j > 0.05) {
+      logJournal_('optimisation', 'ℹ️ hausse bloquée (rebonds)',
+        'retard mais rebonds ' + bounces3j + '/' + sent3j + ' (' +
+        (100 * bounces3j / sent3j).toFixed(1) + '%) sur 3 j > 5% — MAX_SENDS_PER_RUN reste à ' +
+        current + ' (envoyés=' + sentToday + ' attendu≈' + expectedByNow + ')');
+      return;
+    }
   }
 
   const next = Math.min(ceiling, current + 2);
@@ -7375,7 +7402,7 @@ function checkCadence_() {
       }
 
       try {
-        ajusterRythmeAuto_(sentToday, expectedByNow);
+        ajusterRythmeAuto_(sentToday, expectedByNow, context);
         runMachine_(true);
         logJournal_('rattrapage', '✅ relancé', 'passage forcé exécuté');
       } catch (errorRun) {
