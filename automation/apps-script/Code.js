@@ -2848,6 +2848,8 @@ function isPresentBanned_(row) {
 
   const statut = String(row['Statut prospection'] || '').trim().toLowerCase();
   if (/partenaire actif/.test(statut)) return true;
+  // Négociation fermée (06/11/2026) : jamais plus de mail vers ce SaaS.
+  if (/ne plus contacter/.test(statut)) return true;
 
   const name = normalizeName_(row['Nom du SaaS']);
   if (name && getKnownPartnerNames_()[name]) return true;
@@ -3005,6 +3007,69 @@ function activerEnvoiAuClic() {
   );
 }
 
+// Case « Fermer la négociation » (colonne L, 06/11/2026) : le SaaS passe au statut
+// « Ne plus contacter », plus aucun mail ne lui part, et il sort de EN NÉGOCIATION.
+const NE_PLUS_CONTACTER_STATUT = 'Ne plus contacter (fermée par Etienne)';
+
+function fermerNegociationDepuisCase_(ss, range, sheet, row) {
+  const nom = String(sheet.getRange(row, 1).getValue() || '').trim();
+  const decocher = function () { range.setValue(false); };
+  const avis = function (message) { ss.toast(message, 'EN NÉGOCIATION', 12); };
+
+  if (!nom || nom === NEGO_HEADERS[0]) {
+    decocher();
+    return;
+  }
+
+  try {
+    const ui = SpreadsheetApp.getUi();
+    const reponse = ui.alert(
+      'Fermer la négociation',
+      'Fermer « ' + nom + ' » et le ranger dans « Ne plus contacter » ? Plus aucun mail ne partira vers ce SaaS.',
+      ui.ButtonSet.YES_NO
+    );
+    if (reponse !== ui.Button.YES) {
+      decocher();
+      return;
+    }
+  } catch (error) {
+    decocher();
+    avis('Confirmation impossible : rien n’a été fait. ' + safeError_(error));
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    decocher();
+    avis('Le moteur est occupé : réessayez dans une minute. Rien n’a été fait.');
+    return;
+  }
+
+  try {
+    assertRequiredHeaders_();
+    const context = getContext_();
+    const cle = normalizeName_(nom);
+    const index = context.rows.findIndex(function (r) {
+      return normalizeName_(r['Nom du SaaS']) === cle;
+    });
+
+    if (index === -1) {
+      decocher();
+      avis('« ' + nom + ' » introuvable dans Prospection : rien n’a été fait.');
+      return;
+    }
+
+    writeFields_(context, CONFIG.FIRST_DATA_ROW + index, { 'Statut prospection': NE_PLUS_CONTACTER_STATUT });
+    majSuiviOui_(context);
+    avis('« ' + nom + ' » fermé : plus aucun contact, il sort de la négociation.');
+  } catch (error) {
+    decocher();
+    avis('Erreur, rien n’a été modifié : ' + safeError_(error));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function onEditNegociation_(e) {
   if (!e || !e.range) return;
 
@@ -3015,6 +3080,11 @@ function onEditNegociation_(e) {
 
   const row = range.getRow();
   const col = range.getColumn();
+
+  if (row >= 6 && col === 12 && range.getNumRows() === 1 && range.getNumColumns() === 1 && range.getValue() === true) {
+    fermerNegociationDepuisCase_(e.source, range, sheet, row);
+    return;
+  }
 
   if (row < 6 || col < 9 || col > 11) return;
   if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
@@ -6917,11 +6987,11 @@ function watchdogRun() {
 // Onglet « EN NÉGOCIATION », reconstruit à chaque passage horaire. Lecture seule : aucun mail touché.
 const VOICE_ID_CORENTIN = 'IHngRooVccHyPqB4uQkG';
 const NEGO_SHEET_NAME = 'EN NÉGOCIATION';
-const NEGO_NCOL = 11;
+const NEGO_NCOL = 12;
 const NEGO_HEADERS = [
   'Nom du SaaS', 'Email', 'Catégorie', 'ID envoyé', 'Statut actuel', 'Action',
   'Conversation Gmail', 'Réponse envoyée (à la main)', 'Relance 1 (confirmation ID)', 'Relance 2 (confirmation ID)',
-  'Partenariat activé'
+  'Partenariat activé', 'Fermer la négociation'
 ];
 
 // Relance de confirmation d'ID envoyée À LA DEMANDE (case « Relance 1 / 2 » cochée
@@ -7036,6 +7106,7 @@ function majSuiviOui_(context, opts) {
     }
     const cls = String(row['Classification réponse IA'] || '');
     if (!row['Nom du SaaS'] || row['Voix ajoutée (confirmée)'] === true) return;
+    if (/ne plus contacter/i.test(String(row['Statut prospection'] || ''))) return;
     if (!/^\s*(A|B|F|G)\b|INTEGRATION|PARTNERSHIP|PROPOSAL/i.test(cls)) return;
     if (/reject|refus/i.test(cls)) return;
 
@@ -7064,6 +7135,7 @@ function majSuiviOui_(context, opts) {
       cocheesRep[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 1 envoyée'] || cocheesR1[normalizeName_(row['Nom du SaaS'])] === true,
       !!row['Relance intégration 2 envoyée'] || cocheesR2[normalizeName_(row['Nom du SaaS'])] === true,
+      false,
       false
     ];
     if (idEnvoye) {
@@ -7112,20 +7184,20 @@ function majSuiviOui_(context, opts) {
   if (aValider.length) {
     sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
-    sh.getRange(r, 8, aValider.length, 4).insertCheckboxes();
+    sh.getRange(r, 8, aValider.length, 5).insertCheckboxes();
     colorerCategorieNego_(sh, r, aValider);
     r += aValider.length;
   }
   if (envoye.length) {
     sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, 8, envoye.length, 4).insertCheckboxes();
+    sh.getRange(r, 8, envoye.length, 5).insertCheckboxes();
     colorerCategorieNego_(sh, r, envoye);
     r += envoye.length;
   }
   const derniereLigne = Math.max(r - 1, 5);
 
-  const widths = [200, 220, 130, 90, 300, 320, 180, 170, 150, 150, 140];
+  const widths = [200, 220, 130, 90, 300, 320, 180, 170, 150, 150, 140, 150];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
