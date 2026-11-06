@@ -3012,7 +3012,7 @@ function activerEnvoiAuClic() {
 const NE_PLUS_CONTACTER_STATUT = 'Ne plus contacter (fermée par Etienne)';
 
 function fermerNegociationDepuisCase_(ss, range, sheet, row) {
-  const nom = String(sheet.getRange(row, 1).getValue() || '').trim();
+  const nom = String(sheet.getRange(row, 2).getValue() || '').trim();
   const decocher = function () { range.setValue(false); };
   const avis = function (message) { ss.toast(message, 'EN NÉGOCIATION', 12); };
 
@@ -3081,16 +3081,16 @@ function onEditNegociation_(e) {
   const row = range.getRow();
   const col = range.getColumn();
 
-  if (row >= 6 && col === 12 && range.getNumRows() === 1 && range.getNumColumns() === 1 && range.getValue() === true) {
+  if (row >= 6 && col === 1 && range.getNumRows() === 1 && range.getNumColumns() === 1 && range.getValue() === true) {
     fermerNegociationDepuisCase_(e.source, range, sheet, row);
     return;
   }
 
-  if (row < 6 || col < 9 || col > 11) return;
+  if (row < 6 || col < 10 || col > 12) return;
   if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
   if (range.getValue() !== true) return;
 
-  const nom = String(sheet.getRange(row, 1).getValue() || '').trim();
+  const nom = String(sheet.getRange(row, 2).getValue() || '').trim();
   const ss = e.source;
 
   const decocher = function () { range.setValue(false); };
@@ -3101,7 +3101,7 @@ function onEditNegociation_(e) {
     return;
   }
 
-  const n = col === 9 ? 1 : (col === 10 ? 2 : 0);
+  const n = col === 10 ? 1 : (col === 11 ? 2 : 0);
 
   // Confirmation avant toute action : sans réponse « Oui », rien ne part.
   try {
@@ -7042,10 +7042,16 @@ function categorieNego_(cls) {
   return /^\s*G\b|COMMERCIAL|PARTNERSHIP/i.test(String(cls || '')) ? 'LICENCING' : 'PARTENARIAT';
 }
 
+// Ordre des colonnes dans l'onglet : la case « Fermer la négociation » est en A (06/11/2026).
+// En interne, le code garde l'ordre historique (fermer en dernier) : on convertit à l'écriture et à la lecture.
+function versFeuille_(ligne) {
+  return [ligne[ligne.length - 1]].concat(ligne.slice(0, ligne.length - 1));
+}
+
 function colorerCategorieNego_(sh, premiereLigne, lignes) {
   for (let k = 0; k < lignes.length; k++) {
     const licencing = lignes[k][2] === 'LICENCING';
-    sh.getRange(premiereLigne + k, 3)
+    sh.getRange(premiereLigne + k, 4)
       .setBackground(licencing ? '#1a73e8' : '#e91e8c')
       .setFontColor('#ffffff').setFontWeight('bold').setHorizontalAlignment('center');
   }
@@ -7066,7 +7072,9 @@ function majSuiviOui_(context, opts) {
   const cocheesR2 = {};
   const cocheesRep = {};
   if (sh.getLastRow() >= 6) {
-    sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().forEach(function (line) {
+    sh.getRange(6, 1, sh.getLastRow() - 5, NEGO_NCOL).getValues().map(function (l) {
+      return l.slice(1).concat([l[0]]);
+    }).forEach(function (line) {
       if (!line[0]) return;
       const cle = normalizeName_(line[0]);
       if (line[8] === true) cocheesR1[cle] = true;
@@ -7178,31 +7186,33 @@ function majSuiviOui_(context, opts) {
     .setValue('⏳ À VALIDER PAR ETIENNE : ' + (aValider.length + envoye.length) + ' SaaS en négociation')
     .setBackground(ROUGE).setFontColor('#ffffff').setFontWeight('bold').setFontSize(13).setHorizontalAlignment('left');
   r++;
-  sh.getRange(r, 1, 1, NEGO_NCOL).setValues([NEGO_HEADERS]).setBackground(ENTETE).setFontWeight('bold')
+  sh.getRange(r, 1, 1, NEGO_NCOL).setValues([versFeuille_(NEGO_HEADERS)]).setBackground(ENTETE).setFontWeight('bold')
     .setFontColor(NAVY).setFontSize(10);
   r++;
   if (aValider.length) {
-    sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider).setBackground(ORANGE).setFontSize(10)
+    sh.getRange(r, 1, aValider.length, NEGO_NCOL).setValues(aValider.map(versFeuille_)).setBackground(ORANGE).setFontSize(10)
       .setFontColor('#1a1a1a');
-    sh.getRange(r, 8, aValider.length, 5).insertCheckboxes();
+    sh.getRange(r, 1, aValider.length, 1).insertCheckboxes();
+    sh.getRange(r, 9, aValider.length, 4).insertCheckboxes();
     colorerCategorieNego_(sh, r, aValider);
     r += aValider.length;
   }
   if (envoye.length) {
-    sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye).setBackground(VERT).setFontWeight('bold')
+    sh.getRange(r, 1, envoye.length, NEGO_NCOL).setValues(envoye.map(versFeuille_)).setBackground(VERT).setFontWeight('bold')
       .setFontColor('#14532d').setFontSize(11);
-    sh.getRange(r, 8, envoye.length, 5).insertCheckboxes();
+    sh.getRange(r, 1, envoye.length, 1).insertCheckboxes();
+    sh.getRange(r, 9, envoye.length, 4).insertCheckboxes();
     colorerCategorieNego_(sh, r, envoye);
     r += envoye.length;
   }
   const derniereLigne = Math.max(r - 1, 5);
 
-  const widths = [200, 220, 130, 90, 300, 320, 180, 170, 150, 150, 140, 150];
+  const widths = [150, 200, 220, 130, 90, 300, 320, 180, 170, 150, 150, 140];
   widths.forEach(function (w, i) { sh.setColumnWidth(i + 1, w); });
   sh.setRowHeight(1, 52);
   sh.setRowHeight(2, 44);
   sh.getRange(1, 1, derniereLigne, NEGO_NCOL).setWrap(true).setVerticalAlignment('middle');
-  sh.getRange(1, 7, derniereLigne, 1).setFontColor('#1155cc');
+  sh.getRange(1, 8, derniereLigne, 1).setFontColor('#1155cc');
 
   return resultats;
 }
