@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-08-bilan-sante-en-tete-passage'
+  CODE_VERSION: '2026-11-08-moins-de-lectures-gmail-agent-ia-et-copie'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -2526,6 +2526,22 @@ function isSoftRefusal_(error) {
 function isGmailQuotaError_(error) {
   return /Trop d.appels|too many times|invoked too many|limit exceeded|quota/i.test(
     String(error && error.message || error));
+}
+
+// 08/11/2026 : UNE seule recherche Gmail pour savoir quelles conversations ont
+// reçu un message d'un prospect (60 derniers jours), au lieu de relire ~1000
+// fils un par un (cause du quota de lecture atteint chaque jour).
+// Renvoie un objet {idConversation: true}, ou null si la recherche échoue.
+function conversationsAvecReponse_() {
+  try {
+    const trouvees = {};
+    GmailApp.search('-from:' + CONFIG.SENDER_ALIAS + ' newer_than:60d', 0, 500)
+      .forEach(function (thread) { trouvees[thread.getId()] = true; });
+    return trouvees;
+  } catch (error) {
+    if (isGmailQuotaError_(error)) gererErreurQuotaGmail_(error);
+    return null;
+  }
 }
 
 // 03/11/2026 (correctif autonome, diagnostic pilote 16h35) : "plafond quotidien
@@ -6202,6 +6218,8 @@ function processReplyAgentQueue_(context) {
   let replyAgentRowsChecked = 0;
   let replyAgentStoppedEarly = false;
   let i = rotationStart;
+  // 08/11/2026 : seules les conversations avec un message de prospect sont relues.
+  const conversationsActives = conversationsAvecReponse_();
 
   for (let seen = 0; seen < totalRows; seen++, i = (i + 1) % totalRows) {
     if (Date.now() - replyAgentStartedAt > REPLY_AGENT_TIME_BUDGET_MS) {
@@ -6213,6 +6231,7 @@ function processReplyAgentQueue_(context) {
     const row = context.rows[i];
 
     if (!row['ID conversation']) continue;
+    if (conversationsActives && !conversationsActives[String(row['ID conversation'])]) continue;
 
     // 20/10 : conversation clôturée à la main (« Clôturée… ») : aucune réponse automatique.
     if (/clôturée/i.test(String(row['Statut réponse IA'] || ''))) continue;
@@ -6938,13 +6957,26 @@ function copierReponsesRecues_(context) {
     });
   }
 
+  // 08/11/2026 : les nouvelles réponses passent en priorité ; les conversations
+  // déjà copiées ne sont relues qu'une sur 12 par passage (rotation), au lieu
+  // de toutes les heures.
+  const copieProps = PropertiesService.getScriptProperties();
+  const decalageCopie = Number(copieProps.getProperty('COPIE_ROTATION') || 0);
+  const dejaCopiees = {};
+  Object.keys(existing).forEach(function (cle) { dejaCopiees[cle.split('|')[0]] = true; });
+  let rangAncien = 0;
+
   context.rows.forEach(function (row) {
     const statut = String(row['Statut prospection'] || '');
     const etat = String(row['État envoi'] || '');
     const threadId = String(row['ID conversation'] || '');
     if (!threadId) return;
     if (statut.indexOf('Réponse') === -1 && etat.indexOf('Réponse') === -1) return;
-    if (read >= 60) return;
+    if (dejaCopiees[threadId]) {
+      if (((rangAncien++ + decalageCopie) % 12) !== 0) return;
+    } else if (read >= 40) {
+      return;
+    }
 
     read++;
     const thread = getThreadSafely_(threadId);
@@ -6975,6 +7007,7 @@ function copierReponsesRecues_(context) {
   if (out.length) {
     sheet.getRange(sheet.getLastRow() + 1, 1, out.length, REPONSES_HEADERS.length).setValues(out);
   }
+  copieProps.setProperty('COPIE_ROTATION', String((decalageCopie + 1) % 12));
   logJournal_('réponses', '✅ copiées', out.length + ' nouvelle(s) réponse(s) ajoutée(s) à l’historique');
 }
 
@@ -7304,7 +7337,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Relance de la détection des réponses par une recherche Gmail groupée (une requête au lieu de lire ~1000 fils un par un), bilan santé horaire avec réparation automatique, et alerte e-mail en cas de contrôle critique.';
+const OBJECTIF_VERSION_COURANTE = 'Éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
