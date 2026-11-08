@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-08-plafond-relances-10-par-jour'
+  CODE_VERSION: '2026-11-08-nouveau-mail-1-licensing'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -1906,10 +1906,11 @@ function processInitialQueue_(context, cap) {
 
       waitForSendSlot_();
 
+      // Version texte brut (secours) : sans les repères de soulignement __ __.
       GmailApp.sendEmail(
         recipient,
         draft.subject,
-        draft.body,
+        String(draft.body).replace(/__/g, ''),
         options
       );
 
@@ -4657,6 +4658,9 @@ function formatBodyHtml_(body) {
     // apparaissent tels quels dans le mail reçu.
     text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 
+    // 08/11/2026 : __texte__ = souligné dans la version HTML du mail 1.
+    text = text.replace(/__(.+?)__/g, '<u>$1</u>');
+
     // Toute URL en clair devient un simple lien bleu (jamais un bouton).
     text = text.replace(/https?:\/\/[^\s<]+/g, function (url) {
       const prefix = (!emoji2Used && emoji2) ? emoji2 + ' ' : '';
@@ -7354,7 +7358,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
