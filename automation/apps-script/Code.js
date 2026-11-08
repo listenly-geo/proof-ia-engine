@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-08-moins-de-lectures-gmail-agent-ia-et-copie'
+  CODE_VERSION: '2026-11-08-plafond-relances-10-par-jour'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -58,6 +58,7 @@ const DEFAULT_SETTINGS = [
   ['FOLLOWUP_2_ENABLED', 'TRUE', 'TRUE = envoie la relance 2 (J+9) : 2 relances au total (J+4 et J+9), puis arrêt du suivi. FALSE = une seule relance (J+4).'],
   ['QUOTA_RESERVE', '30', 'Quota Gmail gardé en réserve pour tes réponses manuelles : les envois automatiques (1er mail, relances) s’arrêtent quand il reste moins de 20 + cette réserve. Le moteur répartit le quota restant sur les heures restantes de la journée.'],
   ['MAX_SENDS_PER_RUN', '15','Premiers e-mails envoyés au maximum par passage horaire automatique (étale les envois sur la journée au lieu de tout envoyer d’un coup).'],
+  ['MAX_FOLLOWUPS_PER_DAY', '10', 'Relances classiques (J+4 / J+9) envoyées au maximum par JOUR (08/11/2026) : les premiers mails restent la priorité, les relances ne prennent que ce plafond. Mettre 0 pour aucune relance, 999 pour ne plus limiter.'],
   ['MAX_FOLLOWUPS_PER_RUN', '10', 'Relances (classiques + intégration) envoyées au maximum par passage horaire automatique. Évite qu’un gros lot de lignes arrivant au même seuil J+X ne parte toutes en rafale le même jour.'],
   ['SEND_DELAY_MS', '18000', 'Délai en millisecondes entre deux envois consécutifs dans un même passage (évite un pattern de rafale/spam). 18000 = 18 secondes.'],
   ['WEEKDAYS_ONLY', 'TRUE', 'TRUE = envois et relances du lundi au vendredi uniquement.'],
@@ -2184,6 +2185,20 @@ function recentBounceCount_(context) {
   }).length;
 }
 
+// 08/11/2026 : nombre de relances classiques déjà envoyées AUJOURD'HUI (heure de Paris).
+function relancesAujourdhui_(context) {
+  const jour = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd');
+  let n = 0;
+  context.rows.forEach(function (row) {
+    ['Relance 1 envoyée', 'Relance 2 envoyée'].forEach(function (champ) {
+      const v = row[champ];
+      if (v && Object.prototype.toString.call(v) === '[object Date]' &&
+          Utilities.formatDate(v, CONFIG.TIME_ZONE, 'yyyy-MM-dd') === jour) n++;
+    });
+  });
+  return n;
+}
+
 function processFollowUps_(context) {
   const now = new Date();
 
@@ -2195,6 +2210,8 @@ function processFollowUps_(context) {
   // rafale entre 08:39 et 08:40. MAX_FOLLOWUPS_PER_RUN limite le nombre de
   // relances envoyées par passage, et SEND_DELAY_MS espace chaque envoi.
   let remaining = getNumberSetting_('MAX_FOLLOWUPS_PER_RUN', 10);
+  // Plafond journalier (08/11/2026) : priorité aux nouveaux contacts.
+  remaining = Math.min(remaining, getNumberSetting_('MAX_FOLLOWUPS_PER_DAY', 10) - relancesAujourdhui_(context));
 
   for (let i = 0; i < context.rows.length && remaining > 0; i++) {
     const row = context.rows[i];
@@ -7337,7 +7354,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
