@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-10-28-cadence-reponses-ia-30min-7h21h-anti-quota-gmail'
+  CODE_VERSION: '2026-11-08-detection-groupee-bilan-sante-alerte'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -2007,6 +2007,29 @@ function detectReplies_(context) {
   let stoppedEarly = false;
   let i = rotationStart;
 
+  // 08/11/2026 : pré-tri Gmail en UNE recherche (fils contenant un message
+  // extérieur des 60 derniers jours) au lieu de lire ~1000 fils un par un.
+  // Cause du blocage depuis le 29/10 : la lecture ligne à ligne atteignait le
+  // quota Gmail de lecture avant la fin du tour, si bien qu'aucune réponse
+  // n'était plus détectée. Seuls les fils trouvés sont relus.
+  let bloque = false;
+  let candidats = null;
+  try {
+    candidats = {};
+    GmailApp.search('-from:' + CONFIG.SENDER_ALIAS + ' newer_than:60d', 0, 500)
+      .forEach(function (thread) { candidats[thread.getId()] = true; });
+  } catch (error) {
+    candidats = null;
+    if (isGmailQuotaError_(error)) {
+      gererErreurQuotaGmail_(error);
+      bloque = true;
+    }
+  }
+  if (bloque) {
+    PropertiesService.getScriptProperties().setProperty('DETECT_REPLIES_BLOQUEE_AT', String(Date.now()));
+    return;
+  }
+
   for (let seen = 0; seen < totalRows; seen++, i = (i + 1) % totalRows) {
     if (Date.now() - startedAt > DETECT_REPLIES_TIME_BUDGET_MS) {
       stoppedEarly = true;
@@ -2015,6 +2038,9 @@ function detectReplies_(context) {
 
     checked++;
     const row = context.rows[i];
+
+    // 08/11/2026 : seules les conversations trouvées par la recherche groupée sont relues.
+    if (candidats && !candidats[String(row['ID conversation'])]) continue;
 
     if (
       !row['ID conversation'] ||
@@ -2050,6 +2076,7 @@ function detectReplies_(context) {
       logJournal_('réponses', '❌ détection réponse', safeError_(error));
       if (isGmailQuotaError_(error)) {
         gererErreurQuotaGmail_(error);
+        bloque = true;
         break;
       }
       continue;
@@ -2075,6 +2102,13 @@ function detectReplies_(context) {
   // jamais depuis le début, pour que toutes les lignes soient vues au fil
   // des passages même quand le budget de temps est atteint avant la fin.
   rotationProps.setProperty('DETECT_REPLIES_ROTATION_INDEX', String(i));
+
+  // Bilan santé : date du dernier passage complet sans blocage Gmail.
+  if (bloque) {
+    PropertiesService.getScriptProperties().setProperty('DETECT_REPLIES_BLOQUEE_AT', String(Date.now()));
+  } else if (!stoppedEarly) {
+    PropertiesService.getScriptProperties().setProperty('DETECT_REPLIES_LAST_OK_AT', String(Date.now()));
+  }
 
   if (stoppedEarly) {
     logJournal_('réponses', 'ℹ️ détection réponses : budget de temps atteint',
@@ -6855,6 +6889,7 @@ function auditerBoiteReponses_(context) {
     unmatched.push(from.replace(/<.*$/, '').trim() + ' — ' + String(last.getSubject() || '').slice(0, 60));
   });
 
+  PropertiesService.getScriptProperties().setProperty('AUDIT_NON_RATTACHEES', String(unmatched.length));
   if (unmatched.length) {
     logJournal_('audit boîte', '⚠️ réponses non rattachées', unmatched.length + ' : ' + unmatched.slice(0, 8).join(' | '));
   } else {
@@ -7245,6 +7280,198 @@ function watchdogBody_() {
     majSuiviOui_(contextReponses);
   } catch (error) {
     logJournal_('réponses', 'Erreur copie', safeError_(error));
+  }
+  try {
+    bilanSante_();
+  } catch (error) {
+    logJournal_('santé', '⚠️ bilan impossible', safeError_(error));
+  }
+}
+
+// =================================================================
+// BILAN SANTÉ (08/11/2026) : passage horaire, en fin de watchdog.
+//  - Contrôle une liste fixe (déclencheurs, quota, pause, détection des
+//    réponses, copie, réponses non rattachées, erreurs récentes).
+//  - Répare seul ce qui peut l'être (relance de la détection si elle est
+//    en retard pendant la plage d'envoi, hors cooldown).
+//  - Écrit le résultat dans l'onglet visible « Santé moteur ».
+//  - Envoie un e-mail au responsable : une fois à chaque nouvelle version
+//    (mise à jour + objectif), et si un contrôle critique ❌ reste en échec
+//    (au plus un toutes les 6 h).
+// Ne contacte aucun prospect.
+// =================================================================
+const SANTE_SHEET_NAME = 'Santé moteur';
+const OBJECTIF_VERSION_COURANTE = 'Relance de la détection des réponses par une recherche Gmail groupée (une requête au lieu de lire ~1000 fils un par un), bilan santé horaire avec réparation automatique, et alerte e-mail en cas de contrôle critique.';
+
+function getSanteSheet_() {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  return ss.getSheetByName(SANTE_SHEET_NAME) || ss.insertSheet(SANTE_SHEET_NAME);
+}
+
+function bilanSante_() {
+  const props = PropertiesService.getScriptProperties();
+  const now = new Date();
+  const stamp = Utilities.formatDate(now, CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm:ss');
+  const heure = Number(Utilities.formatDate(now, CONFIG.TIME_ZONE, 'H'));
+  const enPlage = heure >= 8 && heure < 20;
+  const controles = [];
+
+  // 1. Déclencheurs
+  const presents = {};
+  ScriptApp.getProjectTriggers().forEach(function (t) { presents[t.getHandlerFunction()] = true; });
+  const attendus = MACHINE_HANDLERS.concat(OPP_MACHINE_HANDLERS, REPLY_AGENT_HANDLERS, [WATCHDOG_HANDLER]);
+  const manquants = attendus.filter(function (h) { return !presents[h]; });
+  controles.push(manquants.length
+    ? { nom: 'Déclencheurs', statut: '❌', detail: 'manquants : ' + manquants.join(', '), action: 'recréation tentée à ce passage, toujours absents' }
+    : { nom: 'Déclencheurs', statut: '✅', detail: attendus.length + ' déclencheurs présents', action: 'aucune' });
+
+  // 2. Quota d'envoi Gmail
+  let quota = -1;
+  try { quota = MailApp.getRemainingDailyQuota(); } catch (error) { quota = -1; }
+  controles.push(quota < 0
+    ? { nom: 'Quota d’envoi Gmail', statut: '⚠️', detail: 'lecture impossible', action: 'aucune' }
+    : { nom: 'Quota d’envoi Gmail', statut: quota < 20 ? '⚠️' : '✅', detail: quota + ' envois restants aujourd’hui', action: 'aucune' });
+
+  // 3. Pause volontaire
+  controles.push(getBoolSetting_('MASTER_PAUSE')
+    ? { nom: 'Envois', statut: '⚠️', detail: 'à l’arrêt (MASTER_PAUSE = TRUE)', action: 'aucune : arrêt volontaire' }
+    : { nom: 'Envois', statut: '✅', detail: 'actifs', action: 'aucune' });
+
+  // 4. Détection des réponses (relancée ici si elle est en retard pendant la plage d'envoi)
+  const ageDetectionH = function () {
+    const dernier = Number(props.getProperty('DETECT_REPLIES_LAST_OK_AT') || 0);
+    return dernier ? (Date.now() - dernier) / 3600000 : Infinity;
+  };
+  let actionDetection = 'aucune';
+  if (enPlage && ageDetectionH() > 2 && cooldownRestantMin_() === 0) {
+    try {
+      detectReplies_(getContext_());
+      actionDetection = ageDetectionH() <= 0.1
+        ? 'détection relancée : terminée ✅'
+        : 'détection relancée : pas encore terminée (reprise au prochain passage)';
+    } catch (error) {
+      actionDetection = 'détection relancée : échec (' + safeError_(error) + ')';
+    }
+  }
+  const ageH = ageDetectionH();
+  const bloqueeAt = Number(props.getProperty('DETECT_REPLIES_BLOQUEE_AT') || 0);
+  const bloqueeRecemment = bloqueeAt > 0 && (Date.now() - bloqueeAt) < 3 * 3600000;
+  let statutDetection = '✅';
+  if (enPlage && ageH > 2) statutDetection = '❌';
+  else if (bloqueeRecemment) statutDetection = '⚠️';
+  controles.push({
+    nom: 'Détection des réponses',
+    statut: statutDetection,
+    detail: (ageH === Infinity ? 'jamais terminée' : 'dernier passage complet il y a ' + (Math.round(ageH * 10) / 10) + ' h') +
+      (bloqueeRecemment ? ' · Gmail bloqué en lecture récemment' : ''),
+    action: actionDetection
+  });
+
+  // 5. Copie des réponses dans « Réponses reçues »
+  const context = getContext_();
+  const copiees = {};
+  const shRep = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID).getSheetByName(REPONSES_SHEET_NAME);
+  if (shRep && shRep.getLastRow() >= 2) {
+    shRep.getRange(2, 8, shRep.getLastRow() - 1, 1).getValues().forEach(function (r) {
+      copiees[String(r[0])] = true;
+    });
+  }
+  const sansCopie = {};
+  context.rows.forEach(function (row) {
+    const etat = String(row['Statut prospection'] || '') + ' ' + String(row['État envoi'] || '');
+    const id = String(row['ID conversation'] || '');
+    if (id && /Réponse/.test(etat) && !copiees[id]) sansCopie[id] = true;
+  });
+  const nbSansCopie = Object.keys(sansCopie).length;
+  controles.push(nbSansCopie
+    ? { nom: 'Copie des réponses', statut: '⚠️', detail: nbSansCopie + ' réponse(s) pas encore copiée(s) dans « Réponses reçues »', action: 'copie relancée à chaque passage (60 max)' }
+    : { nom: 'Copie des réponses', statut: '✅', detail: 'toutes les réponses connues sont copiées', action: 'aucune' });
+
+  // 6. Conversations entrantes non rattachées au Sheet (mesuré par l'audit)
+  const nonRattachees = Number(props.getProperty('AUDIT_NON_RATTACHEES') || 0);
+  controles.push(nonRattachees
+    ? { nom: 'Réponses non rattachées', statut: '⚠️', detail: nonRattachees + ' conversation(s) entrante(s) absente(s) du Sheet (7 jours)', action: 'à vérifier à la main dans Gmail' }
+    : { nom: 'Réponses non rattachées', statut: '✅', detail: 'aucune', action: 'aucune' });
+
+  // 7. Erreurs journalisées pendant les 2 dernières heures
+  const journal = getJournalSheet_();
+  const limite = Utilities.formatDate(new Date(Date.now() - 2 * 3600000), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm:ss');
+  let erreurs = 0;
+  const lastJ = journal.getLastRow();
+  if (lastJ >= 2) {
+    const n = Math.min(150, lastJ - 1);
+    journal.getRange(lastJ - n + 1, 1, n, 4).getValues().forEach(function (r) {
+      const d = r[0] instanceof Date ? Utilities.formatDate(r[0], CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm:ss') : String(r[0]);
+      if (String(r[1]) !== 'santé' && d >= limite && /❌|ERREUR|Erreur/.test(String(r[1]) + ' ' + String(r[2]))) erreurs++;
+    });
+  }
+  controles.push(erreurs === 0
+    ? { nom: 'Erreurs des 2 dernières heures', statut: '✅', detail: 'aucune', action: 'aucune' }
+    : { nom: 'Erreurs des 2 dernières heures', statut: erreurs >= 5 ? '❌' : '⚠️', detail: erreurs + ' erreur(s) journalisée(s), détail dans « Journal script »', action: 'aucune (à lire)' });
+
+  // Synthèse
+  const nbKo = controles.filter(function (c) { return c.statut === '❌'; }).length;
+  const nbAl = controles.filter(function (c) { return c.statut === '⚠️'; }).length;
+  const reponsesAJour = statutDetection === '✅' && nbSansCopie === 0;
+
+  // Onglet visible « Santé moteur »
+  const sh = getSanteSheet_();
+  const lignes = [
+    ['Bilan santé du moteur PROOF IA', '', '', ''],
+    ['Dernier bilan', stamp, 'Version en ligne', CONFIG.CODE_VERSION],
+    ['Objectif de cette version', OBJECTIF_VERSION_COURANTE, '', ''],
+    ['Réponses à jour', reponsesAJour ? 'oui' : 'non', 'Résumé', nbKo + ' critique(s) ❌ · ' + nbAl + ' à surveiller ⚠️'],
+    ['', '', '', ''],
+    ['Contrôle', 'Statut', 'Détail', 'Action automatique']
+  ].concat(controles.map(function (c) { return [c.nom, c.statut, c.detail, c.action]; }));
+  sh.clear();
+  sh.getRange(1, 1, lignes.length, 4).setValues(lignes).setWrap(true).setVerticalAlignment('middle');
+  sh.getRange(1, 1).setFontSize(14).setFontWeight('bold');
+  sh.getRange(2, 1, 3, 1).setFontWeight('bold');
+  sh.getRange(4, 1, 1, 1).setFontWeight('bold');
+  sh.getRange(4, 3, 1, 1).setFontWeight('bold');
+  sh.getRange(6, 1, 1, 4).setFontWeight('bold');
+  sh.setColumnWidth(1, 220);
+  sh.setColumnWidth(2, 90);
+  sh.setColumnWidth(3, 420);
+  sh.setColumnWidth(4, 320);
+
+  logJournal_('santé', nbKo ? '❌ bilan : contrôle(s) critique(s)' : (nbAl ? '⚠️ bilan : à surveiller' : '✅ bilan : tout est OK'),
+    nbKo + ' critique(s), ' + nbAl + ' à surveiller');
+
+  // E-mail : une fois par nouvelle version, ou si un contrôle critique reste en échec (au plus toutes les 6 h)
+  const versionNouvelle = props.getProperty('SANTE_VERSION_VUE') !== CONFIG.CODE_VERSION;
+  const dernierMail = Number(props.getProperty('SANTE_ALERTE_AT') || 0);
+  const alerteCritique = nbKo > 0 && (Date.now() - dernierMail) > 6 * 3600000;
+  if (!versionNouvelle && !alerteCritique) return;
+
+  const to = String(getSetting_('REPORT_TO')).trim() || Session.getEffectiveUser().getEmail();
+  if (!isValidEmail_(to)) return;
+
+  const sujet = versionNouvelle
+    ? 'Moteur PROOF IA mis à jour : version ' + CONFIG.CODE_VERSION
+    : 'Alerte moteur PROOF IA : ' + nbKo + ' contrôle(s) critique(s)';
+  const detailMail = controles.map(function (c) {
+    return c.statut + ' ' + c.nom + ' : ' + c.detail + (c.action !== 'aucune' ? ' (' + c.action + ')' : '');
+  }).join('\n');
+  const corps = [
+    versionNouvelle
+      ? 'Le moteur a été mis à jour (version ' + CONFIG.CODE_VERSION + ').'
+      : 'Un ou plusieurs contrôles critiques sont en échec.',
+    'Objectif de cette version : ' + OBJECTIF_VERSION_COURANTE,
+    '',
+    'Bilan du ' + stamp + ' :',
+    detailMail,
+    '',
+    'Détail complet : https://docs.google.com/spreadsheets/d/' + CONFIG.SPREADSHEET_ID + ' (onglet « Santé moteur »).'
+  ].join('\n');
+
+  try {
+    GmailApp.sendEmail(to, sujet, corps, { name: 'Moteur PROOF IA' });
+    if (versionNouvelle) props.setProperty('SANTE_VERSION_VUE', CONFIG.CODE_VERSION);
+    if (alerteCritique) props.setProperty('SANTE_ALERTE_AT', String(Date.now()));
+  } catch (error) {
+    logJournal_('santé', '⚠️ e-mail d’alerte non envoyé', safeError_(error));
   }
 }
 
