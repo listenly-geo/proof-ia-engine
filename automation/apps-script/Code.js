@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-08-detection-groupee-bilan-sante-alerte'
+  CODE_VERSION: '2026-11-08-bilan-sante-en-tete-passage'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -7263,6 +7263,14 @@ function watchdogBody_() {
   }
   checkTriggers_();
   checkCadence_();
+  // 08/11/2026 : bilan santé placé ici, AVANT les étapes lentes (Postmaster,
+  // vérification Gmail, copie des réponses), pour qu'il tourne à chaque passage
+  // même si une de ces étapes est bloquée par le quota Gmail.
+  try {
+    bilanSante_();
+  } catch (error) {
+    logJournal_('santé', '⚠️ bilan impossible', safeError_(error));
+  }
   try {
     surveillerPostmaster_();
   } catch (error) {
@@ -7280,11 +7288,6 @@ function watchdogBody_() {
     majSuiviOui_(contextReponses);
   } catch (error) {
     logJournal_('réponses', 'Erreur copie', safeError_(error));
-  }
-  try {
-    bilanSante_();
-  } catch (error) {
-    logJournal_('santé', '⚠️ bilan impossible', safeError_(error));
   }
 }
 
