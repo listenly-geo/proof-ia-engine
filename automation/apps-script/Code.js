@@ -6229,8 +6229,13 @@ function askReplyAgent_(apiKey, payload) {
     'Ajoute aussi un champ booléen "integration_confirmed" : true UNIQUEMENT ' +
     'si ce message précis confirme que la voix a été ajoutée/intégrée/mise ' +
     'en ligne chez eux (ex: "it\'s live", "we added it", "done, it\'s up", ' +
-    '"c\'est intégré/ajouté"), false dans tous les autres cas (question, ' +
-    'demande d\'info, discussion en cours, etc.).';
+    '"c\'est intégré/ajouté"), OU s\'il explique que la voix est DÉJÀ ' +
+    'utilisable chez eux avec le Voice ID ElevenLabs (ex: "ElevenLabs voices ' +
+    'already work on our platform, paste the voice ID", "you can already use ' +
+    'it", "any voice reference works"). Décision d\'Etienne du 10/11/2026 : ' +
+    'une réponse qui dit que la voix marche déjà vaut partenaire actif. ' +
+    'false dans tous les autres cas (question, demande d\'info, discussion ' +
+    'en cours, refus, "pas encore supporté", etc.).';
 
   const user =
     'SaaS : ' + payload.saas + '\n' +
