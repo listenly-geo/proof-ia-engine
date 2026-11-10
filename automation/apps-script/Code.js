@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-08-nouveau-mail-1-licensing'
+  CODE_VERSION: '2026-11-10-rebonds-passagers-et-verif-adresse'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -1740,6 +1740,20 @@ function waitForSendSlot_() {
   props.setProperty('LAST_SEND_AT_MS', String(Date.now()));
 }
 
+// 10/11/2026 : les adresses « hello@ » rebondissent deux fois plus que les autres
+// (23 % contre 11 % en moyenne) : elles passent en dernier dans la file.
+function ordreEnvoiPremiersMails_(context) {
+  const sains = [];
+  const risques = [];
+
+  context.rows.forEach(function (row, i) {
+    const local = String(row['Email public'] || '').split('@')[0].trim().toLowerCase();
+    (local === 'hello' ? risques : sains).push(i);
+  });
+
+  return sains.concat(risques);
+}
+
 function processInitialQueue_(context, cap) {
   let remaining = Math.max(
     0,
@@ -1751,11 +1765,14 @@ function processInitialQueue_(context, cap) {
 
   if (!remaining) return;
 
+  const ordreFile = ordreEnvoiPremiersMails_(context);
+
   for (
-    let i = 0;
-    i < context.rows.length && remaining > 0;
-    i++
+    let rang = 0;
+    rang < ordreFile.length && remaining > 0;
+    rang++
   ) {
+    const i = ordreFile[rang];
     const row = context.rows[i];
 
     if (
@@ -1831,6 +1848,13 @@ function processInitialQueue_(context, cap) {
 
     if (getBoolSetting_('EMAIL_VERIFY_ENABLED')) {
       const verif = verifyEmailAddress_(recipient);
+
+      // 10/11/2026 : on journalise la vraie réponse du vérificateur pour chaque
+      // premier mail, afin de voir ce qu'il renvoie réellement (le filtre n'a
+      // jamais rejeté aucune adresse sur 653 envois).
+      logJournal_('vérif e-mail',
+        verif.checked ? (verif.safe ? '✅ ok' : '⛔ invalide') : 'ℹ️ non vérifié',
+        recipient + ' — ' + String(verif.raw || '').slice(0, 120));
 
       if (verif.checked && !verif.safe) {
         writeFields_(context, sheetRow, {
@@ -2119,6 +2143,20 @@ function detectReplies_(context) {
 }
 
 // Repère les e-mails renvoyés par mailer-daemon et stoppe les relances.
+// 10/11/2026 : un rebond « passager » (problème temporaire chez le destinataire,
+// boîte pleine, nouvel essai automatique de Gmail) n'est PAS une adresse perdue :
+// on le journalise et on réessaie, sans abandonner le SaaS ni gonfler le taux.
+// Un rebond définitif (adresse introuvable, utilisateur inconnu, domaine absent,
+// rejet) reste traité comme avant. En cas de doute, on garde le comportement
+// d'avant (rebond définitif).
+function estRebondPassager_(body) {
+  const dur = /adresse introuvable|address not found|wasn.t found|couldn.t be found|n.existe pas|does not exist|doesn.t exist|user unknown|unknown user|no such user|domain.{0,40}not found|domaine.{0,40}introuvable|\b5\.[1-5]\.\d|rejected|rejet/i;
+  const passager = /probl[eè]me temporaire|temporary problem|temporarily|try again later|r[eé]essayer|continuera d.essayer|will keep trying|delivery incomplete|distribution incompl[eè]te|mailbox full|bo[iî]te.{0,30}pleine|quota exceeded|\b4\.[2-7]\.\d/i;
+  const texte = String(body || '');
+  if (dur.test(texte)) return false;
+  return passager.test(texte);
+}
+
 function detectBounces_(context) {
   let threads = [];
 
@@ -2155,11 +2193,30 @@ function detectBounces_(context) {
       return;
     }
 
-    const bounced = bodies.some(function (body) {
+    const concernes = bodies.filter(function (body) {
       return body.indexOf(email) !== -1;
     });
 
-    if (!bounced) return;
+    if (!concernes.length) return;
+
+    // Tous les messages d'échec pour cette adresse sont passagers : on ne
+    // marque PAS « Rebond » (journal une seule fois par adresse et par jour).
+    if (concernes.every(estRebondPassager_)) {
+      try {
+        const props = PropertiesService.getScriptProperties();
+        const vus = JSON.parse(props.getProperty('SOFT_BOUNCE_VUS') || '{}');
+        const jour = Utilities.formatDate(new Date(), CONFIG.TIME_ZONE, 'yyyy-MM-dd');
+
+        if (vus[email] !== jour) {
+          vus[email] = jour;
+          const cles = Object.keys(vus);
+          if (cles.length > 300) delete vus[cles[0]];
+          props.setProperty('SOFT_BOUNCE_VUS', JSON.stringify(vus));
+          logJournal_('rebond passager', 'ℹ️ réessai plus tard', email + ' (problème temporaire, adresse conservée)');
+        }
+      } catch (e) { /* journalisation facultative */ }
+      return;
+    }
 
     writeFields_(context, CONFIG.FIRST_DATA_ROW + index, {
       'À relancer': false,
@@ -4939,7 +4996,13 @@ function verifyEmailAddress_(email) {
     // Statut inconnu/ambigu (ex. "Unknown", "Catch-All") → on n'est pas sûr
     // que ce soit mauvais, donc on laisse passer plutôt que de bloquer un
     // prospect valide par excès de prudence.
-    return { checked: true, safe: true, raw: status || (explicitlySafe ? 'valid' : text.slice(0, 200)) };
+    return {
+      checked: true,
+      safe: true,
+      raw: (status || (explicitlySafe ? 'valid' : text.slice(0, 200))) +
+        (data.Diagnosis ? ' · ' + String(data.Diagnosis).slice(0, 60) : '') +
+        (data.Role_Based ? ' · rôle=' + data.Role_Based : '')
+    };
   } catch (error) {
     console.log('Vérification email (' + email + ') : erreur — ' + safeError_(error));
     return { checked: false, safe: true, raw: safeError_(error) };
@@ -7358,7 +7421,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réduire les rebonds : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
