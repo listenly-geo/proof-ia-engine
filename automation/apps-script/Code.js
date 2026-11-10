@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-10-rebonds-passagers-et-verif-adresse'
+  CODE_VERSION: '2026-11-10-hello-seulement-si-valide'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -1855,6 +1855,25 @@ function processInitialQueue_(context, cap) {
       logJournal_('vérif e-mail',
         verif.checked ? (verif.safe ? '✅ ok' : '⛔ invalide') : 'ℹ️ non vérifié',
         recipient + ' — ' + String(verif.raw || '').slice(0, 120));
+
+      // 10/11/2026 (décision d'Etienne) : une adresse « hello@ » (23 % de rebonds)
+      // ne part que si le vérificateur répond explicitement « valide ». Sinon elle
+      // est mise de côté (statut dédié, pas supprimée) : elle sort de la file et
+      // ne sera pas revérifiée à chaque passage.
+      if (
+        !(verif.checked && !verif.safe) &&
+        String(recipient).split('@')[0].trim().toLowerCase() === 'hello' &&
+        !(verif.checked && verif.valid)
+      ) {
+        writeFields_(context, sheetRow, {
+          'Envoyer': false,
+          'Statut prospection': 'Mis de côté — hello@ non confirmé',
+          'État envoi': 'Mis de côté — adresse hello@ non confirmée « valide » par le vérificateur',
+          'Erreur envoi': ''
+        });
+
+        continue;
+      }
 
       if (verif.checked && !verif.safe) {
         writeFields_(context, sheetRow, {
@@ -4999,6 +5018,7 @@ function verifyEmailAddress_(email) {
     return {
       checked: true,
       safe: true,
+      valid: explicitlySafe,
       raw: (status || (explicitlySafe ? 'valid' : text.slice(0, 200))) +
         (data.Diagnosis ? ' · ' + String(data.Diagnosis).slice(0, 60) : '') +
         (data.Role_Based ? ' · rôle=' + data.Role_Based : '')
@@ -7421,7 +7441,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Réduire les rebonds : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
