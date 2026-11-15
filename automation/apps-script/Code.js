@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-10-verificateur-adresse-corrige'
+  CODE_VERSION: '2026-11-15-reponse-refus-licensing'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -6229,6 +6229,19 @@ function askReplyAgent_(apiKey, payload) {
     'AUTOMATION ci-dessus, sans texte autour, sans balises markdown. ' +
     '"reply_body" doit être le corps complet du mail (sans ligne ' +
     '"Subject:"), prêt à être envoyé tel quel, en texte brut (pas de HTML). ' +
+    'RÈGLE LICENSING (décision d\'Etienne du 15/11/2026) : quand le SaaS répond ' +
+    'qu\'il ne peut pas ajouter ou utiliser les voix ElevenLabs externes (refus ' +
+    'poli, "pas supporté", "pas pour le moment", catégories H2/H3) ET qu\'il a ' +
+    'une bibliothèque de voix à lui ou une offre de voix, le brouillon de ' +
+    'réponse doit : (1) remercier en une phrase pour la clarification, ' +
+    '(2) contenir EXACTEMENT cette phrase : "If ElevenLabs voices aren\'t an ' +
+    'option for you, I\'m also open to a licensing contract.", (3) finir par ' +
+    'cette question en gras (**...**) : "**Would a licensing agreement for my ' +
+    'voice be something you could consider?**", puis "Best,". Ne PAS ajouter ' +
+    'cette phrase si le SaaS demande de ne plus le contacter, refuse ' +
+    'fermement (H1), n\'a aucune bibliothèque de voix (modèles ouverts ' +
+    'seulement) ou a déjà parlé de licence dans la conversation : dans ces ' +
+    'cas, garde une clôture polie et courte. ' +
     'Ajoute aussi un champ booléen "integration_confirmed" : true UNIQUEMENT ' +
     'si ce message précis confirme que la voix a été ajoutée/intégrée/mise ' +
     'en ligne chez eux (ex: "it\'s live", "we added it", "done, it\'s up", ' +
@@ -7449,7 +7462,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
