@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-16-reponses-auto-palier1'
+  CODE_VERSION: '2026-11-16-palier1-desactive'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -71,8 +71,8 @@ const DEFAULT_SETTINGS = [
     'Clé API MyEmailVerifier (https://client.myemailverifier.com). Laisser vide pour désactiver même si EMAIL_VERIFY_ENABLED = TRUE.'],
   ['REPLY_AGENT_AUTO_SEND', 'TRUE',
     'TRUE = l’IA envoie elle-même les réponses à confiance élevée (après le délai aléatoire), seules les réponses incertaines passent en validation manuelle. FALSE = TOUTE réponse générée par l’IA reste en brouillon « À valider manuellement », jamais envoyée automatiquement.'],
-  ['REPLY_AUTO_TIER1', 'TRUE',
-    'TRUE = palier 1 (16/11/2026) : l\'IA envoie seule, avec un délai de 60 à 120 min, les refus polis (H) et les simples intérêts licensing (G, lien de la page licensing) à confiance >= 0.85, sans terme contractuel. Tout le reste reste « À valider manuellement ». FALSE = tout en brouillon.'],
+  ['REPLY_AUTO_TIER1', 'FALSE',
+    'TRUE = palier 1 (créé le 16/11/2026, DÉSACTIVÉ le soir même par Etienne : on entraîne d\'abord la machine avec des brouillons validés) : l\'IA envoie seule, avec un délai de 60 à 120 min, les refus polis (H) et les simples intérêts licensing (G, lien de la page licensing) à confiance >= 0.85, sans terme contractuel. Tout le reste reste « À valider manuellement ». FALSE = tout en brouillon.'],
   ['REPLY_AUTO_MAX_PER_DAY', '8', 'Palier 1 : nombre maximum de réponses automatiques par jour.'],
   ['REPLY_AUTO_DELAY_MIN', '60', 'Palier 1 : délai minimum (minutes) avant l\'envoi automatique, pour pouvoir annuler.'],
   ['INTEGRATION_REMINDER_ENABLED', 'FALSE',
