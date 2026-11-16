@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-16-lien-licensing'
+  CODE_VERSION: '2026-11-16-lien-licensing-sans-whatsapp'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -5214,6 +5214,9 @@ function daysBetween_(from, to) {
 // WhatsApp validée par Etienne le 17/10/2026. Si aucune question n'est
 // trouvée, la phrase est ajoutée juste avant la formule de politesse.
 const LICENSING_LINK_ = 'https://corentinvoice.live/#/licensing';
+// 16/11/2026 (décision d'Etienne) : dans les réponses licencing on envoie le LIEN de la page
+// licensing (qui redirige elle-même vers WhatsApp), pas le lien WhatsApp direct.
+const LICENSING_CTA_ = 'You can find all the details of my licensing offer, and how to contact me, here: ' + LICENSING_LINK_;
 const WHATSAPP_CTA_ = '**Could you contact me on [WhatsApp](https://wa.me/33659636801) to discuss this partnership?**';
 
 // Détecte une possibilité de collaboration / partenariat (mots relevés dans
@@ -5299,7 +5302,7 @@ function stripEmoji_(text) {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/[ \t]{2,}/g, ' ');
 }
-function applyWhatsAppCta_(text) {
+function applyWhatsAppCta_(text, contexte) {
   const paragraphs = String(text).trim().split(/\n{2,}/);
 
   // Ce qui précède la formule de politesse (la signature est remplacée).
@@ -5313,25 +5316,21 @@ function applyWhatsAppCta_(text) {
 
   const base = signoff >= 0 ? paragraphs.slice(0, signoff) : paragraphs.slice();
 
+  // Licensing (mot « licence / licensing / royalties » dans la réponse ou dans le
+  // message du SaaS) : lien de la page licensing. Sinon : WhatsApp comme avant.
+  const estLicensing = /licen[cs]|royalt/i.test(base.join('\n\n') + ' ' + String(contexte || ''));
+  const cta = estLicensing ? LICENSING_CTA_ : WHATSAPP_CTA_;
+
   let replaced = false;
   for (let i = base.length - 1; i >= 0; i--) {
     if (/\?\**\s*$/.test(base[i].trim())) {
-      base[i] = WHATSAPP_CTA_;
+      base[i] = cta;
       replaced = true;
       break;
     }
   }
 
-  if (!replaced) base.push(WHATSAPP_CTA_);
-
-  // 16/11/2026 (décision d'Etienne) : tout mail de réponse licencing contient le
-  // lien de la page licensing (quand le mail parle de licence), une seule fois,
-  // juste avant la question finale (WhatsApp).
-  const texteBase = base.join('\n\n');
-  if (/licen[cs]/i.test(texteBase) && texteBase.indexOf(LICENSING_LINK_) === -1) {
-    base.splice(base.length - 1, 0,
-      'You can find the details of my licensing offer here: ' + LICENSING_LINK_);
-  }
+  if (!replaced) base.push(cta);
 
   return base.concat([LICENCING_SIGNATURE_]).join('\n\n');
 }
@@ -6472,7 +6471,7 @@ function processReplyAgentQueue_(context) {
     // Licensing (G) : la dernière question de l'IA est remplacée par une
     // phrase en gras proposant de discuter sur WhatsApp (lien direct).
     if (isCommercialPartnership && body) {
-      body = stripEmoji_(applyWhatsAppCta_(body));
+      body = stripEmoji_(applyWhatsAppCta_(body, reply.text));
     }
 
     // Signature automatique : le brouillon se termine par « Best, » seul, la
@@ -7472,7 +7471,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Lien de la page licensing (corentinvoice.live/#/licensing) ajouté dans toutes les réponses licencing, juste avant la demande de contact WhatsApp. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
