@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-16-lien-licensing-sans-whatsapp'
+  CODE_VERSION: '2026-11-16-reponses-auto-palier1'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -71,6 +71,10 @@ const DEFAULT_SETTINGS = [
     'Clé API MyEmailVerifier (https://client.myemailverifier.com). Laisser vide pour désactiver même si EMAIL_VERIFY_ENABLED = TRUE.'],
   ['REPLY_AGENT_AUTO_SEND', 'TRUE',
     'TRUE = l’IA envoie elle-même les réponses à confiance élevée (après le délai aléatoire), seules les réponses incertaines passent en validation manuelle. FALSE = TOUTE réponse générée par l’IA reste en brouillon « À valider manuellement », jamais envoyée automatiquement.'],
+  ['REPLY_AUTO_TIER1', 'TRUE',
+    'TRUE = palier 1 (16/11/2026) : l\'IA envoie seule, avec un délai de 60 à 120 min, les refus polis (H) et les simples intérêts licensing (G, lien de la page licensing) à confiance >= 0.85, sans terme contractuel. Tout le reste reste « À valider manuellement ». FALSE = tout en brouillon.'],
+  ['REPLY_AUTO_MAX_PER_DAY', '8', 'Palier 1 : nombre maximum de réponses automatiques par jour.'],
+  ['REPLY_AUTO_DELAY_MIN', '60', 'Palier 1 : délai minimum (minutes) avant l\'envoi automatique, pour pouvoir annuler.'],
   ['INTEGRATION_REMINDER_ENABLED', 'FALSE',
     'Relances de confirmation d’intégration : désactivées (24/10/2026). Ces relances sont gérées à la main par Etienne. FALSE = aucune relance de ce type.'],
   ['INTEGRATION_REMINDER_J1', '7', 'Jours après leur réponse avant le 1er rappel « où en êtes-vous ? ».'],
@@ -5227,6 +5231,42 @@ function isPartnershipText_(text) {
     .test(String(text || ''));
 }
 
+// 16/11/2026 (décision d'Etienne, « go » palier 1) : réponses automatiques
+// limitées aux cas simples et sans risque. Tout le reste reste en brouillon
+// « À valider manuellement ». Interrupteur : REPLY_AUTO_TIER1 (Réglages).
+//  - H : refus poli / limite technique / pas maintenant (sauf demande de ne
+//    plus être contacté ou menace : alors aucune réponse automatique).
+//  - G : simple intérêt licensing, sans terme contractuel ni chiffre, ni
+//    dans leur message ni dans la réponse (lien de la page licensing).
+// Jamais : intégration confirmée (flux partenaire), ID de voix (palier 2),
+// confiance < 0.85, révision humaine demandée.
+function isTier1AutoReply_(result, classification, replyText, body) {
+  if (!getBoolSetting_('REPLY_AUTO_TIER1')) return false;
+  if (!body) return false;
+  if (result.integration_confirmed || result.human_review_required) return false;
+
+  const confidence = Number(result.confidence);
+  if (!isFinite(confidence) || confidence < 0.85) return false;
+
+  const cls = String(classification || '').trim().toUpperCase().charAt(0);
+  if (cls !== 'H' && cls !== 'G') return false;
+
+  const sensible = /contract|agreement|exclusiv|royalt|percent|\d\s?%|\$|€|eur\b|usd\b|\bnda\b|buyout|perpetual|intellectual|ownership|indemn|terminat|legal|lawyer|attorney|minimum|guarantee|\bfee\b|pricing|price|payment|revenue|commission|invoice|budget/i;
+  const stop = /unsubscribe|do not contact|don'?t contact|stop (emailing|contacting|writing)|remove (me|us)|take me off|spam|ne plus (me )?contacter|cease/i;
+  const texte = String(replyText || '');
+
+  if (stop.test(texte)) return false;
+  if (sensible.test(texte) || sensible.test(body)) return false;
+  if (texte.length > 1500) return false;
+
+  return true;
+}
+
+// Compte des réponses automatiques du jour (plafond REPLY_AUTO_MAX_PER_DAY).
+function autoReplyCountKey_() {
+  return 'AUTO_REPLIES_' + Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyyMMdd');
+}
+
 // Message de politesse pur (remerciement, "you're welcome", "let us know"...)
 // sans question ni demande d'information : l'IA n'y répond pas.
 function isPoliteClosing_(text) {
@@ -6531,7 +6571,13 @@ function processReplyAgentQueue_(context) {
     // 24/10/2026 (décision d'Etienne) : le moteur ne envoie JAMAIS une réponse
     // toute seule. Chaque réponse de l'IA est rédigée en brouillon, dans le
     // fil Gmail et dans le Sheet ; Etienne relit et valide l'envoi lui-même.
-    const needsHuman = true;
+    const autoCountKey = autoReplyCountKey_();
+    const autoToday = Number(PropertiesService.getScriptProperties().getProperty(autoCountKey) || 0);
+    const parisDay = Number(Utilities.formatDate(new Date(), 'Europe/Paris', 'u')); // 1 = lundi … 7 = dimanche
+    const autoOk = isTier1AutoReply_(result, classification, reply.text, body) &&
+      autoToday < getNumberSetting_('REPLY_AUTO_MAX_PER_DAY', 8) &&
+      parisDay <= 5;
+    const needsHuman = !autoOk;
 
     if (needsHuman) {
       // Brouillon réel dans le fil Gmail (sous le message du prospect) : il
@@ -6573,22 +6619,21 @@ function processReplyAgentQueue_(context) {
       continue;
     }
 
-    const minDelay = getNumberSetting_('REPLY_AGENT_MIN_DELAY', 3);
-    const maxDelay = getNumberSetting_('REPLY_AGENT_MAX_DELAY', 18);
-    let delay = Number(result.recommended_delay_minutes);
-
-    if (!isFinite(delay) || delay <= 0) {
-      delay = minDelay + Math.random() * Math.max(1, maxDelay - minDelay);
-    }
-
-    delay = Math.min(45, Math.max(2, delay));
+    // Palier 1 : délai de 60 à 120 min, pour qu'Etienne puisse annuler (il
+    // suffit de remplacer « Programmée » par autre chose dans « Statut réponse IA »).
+    const delay = getNumberSetting_('REPLY_AUTO_DELAY_MIN', 60) +
+      Math.random() * getNumberSetting_('REPLY_AUTO_DELAY_SPREAD', 60);
+    PropertiesService.getScriptProperties().setProperty(autoCountKey, String(autoToday + 1));
+    logJournal_('ReplyAgent', '🤖 réponse automatique programmée (palier 1)', String(row['Nom du SaaS'] || '') +
+      ' : ' + classification + ', envoi dans ~' + Math.round(delay) + ' min');
 
     writeFields_(context, sheetRow, Object.assign({
       'Classification réponse IA': String(result.classification || ''),
       'Brouillon réponse IA': body,
       'Statut réponse IA': 'Programmée',
       'Envoi réponse prévu': new Date(Date.now() + delay * 60000),
-      'Dernier message IA (ID)': String(reply.id || '')
+      'Dernier message IA (ID)': String(reply.id || ''),
+      'Notes / prochaine action': 'Réponse AUTO programmée (palier 1) : pour annuler, changer « Statut réponse IA » avant l\'heure d\'envoi'
     }, confirmationFields));
   }
 
@@ -6607,6 +6652,8 @@ function processReplyAgentQueue_(context) {
 // l'heure prévue est passée.
 function processScheduledReplies_(context) {
   const now = Date.now();
+  // Pas d'envoi automatique le week-end (reporté au lundi).
+  if (Number(Utilities.formatDate(new Date(), 'Europe/Paris', 'u')) > 5) return;
 
   for (let i = 0; i < context.rows.length; i++) {
     const row = context.rows[i];
@@ -7471,7 +7518,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
