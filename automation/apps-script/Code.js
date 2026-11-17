@@ -7829,6 +7829,19 @@ function sondeGmailApresBlocage_(todayKey) {
   setSetting_('MAX_SENDS_PER_RUN', String(probe));
   logJournal_('sonde Gmail', 'ℹ️ reprise prudente',
     'blocage vu le ' + lastBlock + ' : MAX_SENDS_PER_RUN ' + before + ' → ' + probe + ' aujourd’hui pour tester Gmail');
+
+  // Correctif 17/11/2026 (pilote autonome) : QUOTA_BLOCKED n'était jamais
+  // effacé, seulement réécrit sur un NOUVEAU blocage. Comme lastBlock reste
+  // "une date différente d'aujourd'hui" tous les jours suivants tant qu'aucun
+  // nouveau blocage ne survient, cette sonde se redéclenchait chaque matin et
+  // ramenait MAX_SENDS_PER_RUN à 3, même des jours après un blocage résolu
+  // (vu dans Journal script : "blocage vu le 2026-11-06" répété identique du
+  // 07/11 au 17/11, 11 jours de suite, empêchant toute remontée durable).
+  // On efface la marque ici, une fois la journée de prudence posée : si Gmail
+  // bloque à nouveau, gererErreurQuotaGmail_/quotaGmailAtteintAujourdhui_
+  // la remettent aussitôt avec la date du jour, donc la prudence reprend
+  // normalement le lendemain sans rien perdre en sécurité.
+  props.deleteProperty('QUOTA_BLOCKED');
 }
 
 // Optimisation automatique du rythme : quand le contrôle horaire constate un
