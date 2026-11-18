@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-16-palier1-desactive'
+  CODE_VERSION: '2026-11-18-reponses-100-auto'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -71,6 +71,8 @@ const DEFAULT_SETTINGS = [
     'Clé API MyEmailVerifier (https://client.myemailverifier.com). Laisser vide pour désactiver même si EMAIL_VERIFY_ENABLED = TRUE.'],
   ['REPLY_AGENT_AUTO_SEND', 'TRUE',
     'TRUE = l’IA envoie elle-même les réponses à confiance élevée (après le délai aléatoire), seules les réponses incertaines passent en validation manuelle. FALSE = TOUTE réponse générée par l’IA reste en brouillon « À valider manuellement », jamais envoyée automatiquement.'],
+  ['REPLY_AUTO_FULL', 'TRUE',
+    'TRUE = réponses 100 % automatiques (18/11/2026) : toutes les catégories partent seules après un court délai, sauf contrat/exclusivité/montant/pourcentage/NDA/juridique ou confiance < 0.75 (brouillon à valider). FALSE = retour au palier 1 / brouillons.'],
   ['REPLY_AUTO_TIER1', 'FALSE',
     'TRUE = palier 1 (créé le 16/11/2026, DÉSACTIVÉ le soir même par Etienne : on entraîne d\'abord la machine avec des brouillons validés) : l\'IA envoie seule, avec un délai de 60 à 120 min, les refus polis (H) et les simples intérêts licensing (G, lien de la page licensing) à confiance >= 0.85, sans terme contractuel. Tout le reste reste « À valider manuellement ». FALSE = tout en brouillon.'],
   ['REPLY_AUTO_MAX_PER_DAY', '8', 'Palier 1 : nombre maximum de réponses automatiques par jour.'],
@@ -5241,23 +5243,33 @@ function isPartnershipText_(text) {
 // Jamais : intégration confirmée (flux partenaire), ID de voix (palier 2),
 // confiance < 0.85, révision humaine demandée.
 function isTier1AutoReply_(result, classification, replyText, body) {
-  if (!getBoolSetting_('REPLY_AUTO_TIER1')) return false;
+  // 18/11/2026 (décision d'Etienne : « tout automatiser à 100 % ») : mode COMPLET.
+  // Toutes les catégories A-J partent seules, SAUF les cas où le prompt exige
+  // une validation humaine (contrat, exclusivité, montant, pourcentage, NDA,
+  // juridique...) ou une confiance < 0.75 : ceux-là restent en brouillon.
+  const full = getBoolSetting_('REPLY_AUTO_FULL');
+  if (!full && !getBoolSetting_('REPLY_AUTO_TIER1')) return false;
   if (!body) return false;
-  if (result.integration_confirmed || result.human_review_required) return false;
+  if (result.human_review_required) return false;
+  if (!full && result.integration_confirmed) return false;
 
   const confidence = Number(result.confidence);
-  if (!isFinite(confidence) || confidence < 0.85) return false;
+  if (!isFinite(confidence) || confidence < (full ? 0.75 : 0.85)) return false;
 
-  const cls = String(classification || '').trim().toUpperCase().charAt(0);
-  if (cls !== 'H' && cls !== 'G') return false;
+  if (!full) {
+    const cls = String(classification || '').trim().toUpperCase().charAt(0);
+    if (cls !== 'H' && cls !== 'G') return false;
+  }
 
-  const sensible = /contract|agreement|exclusiv|royalt|percent|\d\s?%|\$|€|eur\b|usd\b|\bnda\b|buyout|perpetual|intellectual|ownership|indemn|terminat|legal|lawyer|attorney|minimum|guarantee|\bfee\b|pricing|price|payment|revenue|commission|invoice|budget/i;
+  const sensible = full
+    ? /contract|agreement|exclusiv|percent|\d\s?%|\$|€|\bnda\b|buyout|perpetual|intellectual|ownership|indemn|terminat|legal|lawyer|attorney|minimum|guarantee/i
+    : /contract|agreement|exclusiv|royalt|percent|\d\s?%|\$|€|eur\b|usd\b|\bnda\b|buyout|perpetual|intellectual|ownership|indemn|terminat|legal|lawyer|attorney|minimum|guarantee|\bfee\b|pricing|price|payment|revenue|commission|invoice|budget/i;
   const stop = /unsubscribe|do not contact|don'?t contact|stop (emailing|contacting|writing)|remove (me|us)|take me off|spam|ne plus (me )?contacter|cease/i;
   const texte = String(replyText || '');
 
   if (stop.test(texte)) return false;
   if (sensible.test(texte) || sensible.test(body)) return false;
-  if (texte.length > 1500) return false;
+  if (texte.length > (full ? 3000 : 1500)) return false;
 
   return true;
 }
@@ -7518,7 +7530,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
