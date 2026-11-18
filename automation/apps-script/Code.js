@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-18-optimisation-autonome'
+  CODE_VERSION: '2026-11-18-sans-whatsapp'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -5299,7 +5299,70 @@ const LICENSING_LINK_ = 'https://corentinvoice.live/#/licensing';
 // 16/11/2026 (décision d'Etienne) : dans les réponses licencing on envoie le LIEN de la page
 // licensing (qui redirige elle-même vers WhatsApp), pas le lien WhatsApp direct.
 const LICENSING_CTA_ = 'You can find all the details of my licensing offer, and how to contact me, here: ' + LICENSING_LINK_;
-const WHATSAPP_CTA_ = '**Could you contact me on [WhatsApp](https://wa.me/33659636801) to discuss this partnership?**';
+// 18/11/2026 (décision d'Etienne) : plus JAMAIS de lien ni de phrase WhatsApp dans les mails.
+// Seule la page licensing est partagée (elle redirige elle-même vers le contact).
+// Le nom de la constante est conservé pour les appels existants.
+const WHATSAPP_CTA_ = LICENSING_CTA_;
+
+// Retire d'un texte tout paragraphe qui parle de WhatsApp ou contient un lien wa.me
+// (filet de sécurité : l'IA ou un ancien modèle pourrait encore l'écrire).
+function stripWhatsApp_(text) {
+  const paragraphs = String(text || '').split(/\n{2,}/);
+  const kept = paragraphs.filter(function (p) {
+    return !/whats\s?app|wa\.me|wa\.link/i.test(p);
+  });
+  return kept.join('\n\n');
+}
+
+// Corrige les brouillons Gmail déjà créés qui contiennent l'ancienne phrase WhatsApp :
+// elle est remplacée par le lien de la page licensing. 10 brouillons max par passage.
+function corrigerBrouillonsWhatsApp_() {
+  let threads;
+  try {
+    threads = GmailApp.search('in:drafts (wa.me OR WhatsApp)', 0, 10);
+  } catch (e) {
+    logJournal_('Brouillons', 'Recherche brouillons WhatsApp impossible', safeError_(e));
+    return 0;
+  }
+  if (!threads.length) return 0;
+
+  const ids = {};
+  threads.forEach(function (t) {
+    t.getMessages().forEach(function (m) { if (m.isDraft()) ids[m.getId()] = true; });
+  });
+
+  let corriges = 0;
+  GmailApp.getDrafts().forEach(function (draft) {
+    if (corriges >= 10) return;
+    const message = draft.getMessage();
+    if (!ids[message.getId()]) return;
+
+    const plain = String(message.getPlainBody() || '');
+    if (!/whats\s?app|wa\.me/i.test(plain)) return;
+
+    // On garde seulement le texte écrit par le moteur (avant la citation « On ... wrote: »).
+    const own = plain.split(/\n+On .{5,120} wrote:/)[0].trim();
+    let nouveau = stripWhatsApp_(own);
+    if (nouveau.indexOf(LICENSING_LINK_) === -1) {
+      const paragraphs = nouveau.split(/\n{2,}/);
+      const dernier = paragraphs[paragraphs.length - 1] || '';
+      const closing = /^(best|kind regards|regards|cheers)/i.test(dernier.trim());
+      const base = closing ? paragraphs.slice(0, -1) : paragraphs;
+      nouveau = base.concat([LICENSING_CTA_, LICENCING_SIGNATURE_]).join('\n\n');
+    }
+    nouveau = normalizeSignoff_(stripEmoji_(nouveau));
+
+    try {
+      draft.update(message.getTo(), message.getSubject(), nouveau, initialMailOptions_(nouveau));
+      corriges++;
+    } catch (e) {
+      logJournal_('Brouillons', 'Correction WhatsApp impossible', message.getSubject() + ' : ' + safeError_(e));
+    }
+  });
+
+  if (corriges) logJournal_('Brouillons', 'Brouillons corrigés (WhatsApp remplacé par la page licensing)', String(corriges));
+  return corriges;
+}
 
 // Détecte une possibilité de collaboration / partenariat (mots relevés dans
 // les propositions reçues : licence, royalties, exclusivité, studio, pilote,
@@ -5442,12 +5505,11 @@ function applyWhatsAppCta_(text, contexte) {
     }
   }
 
-  const base = signoff >= 0 ? paragraphs.slice(0, signoff) : paragraphs.slice();
+  const base = (signoff >= 0 ? paragraphs.slice(0, signoff) : paragraphs.slice())
+    .filter(function (p) { return !/whats\s?app|wa\.me|wa\.link/i.test(p); });
 
-  // Licensing (mot « licence / licensing / royalties » dans la réponse ou dans le
-  // message du SaaS) : lien de la page licensing. Sinon : WhatsApp comme avant.
-  const estLicensing = /licen[cs]|royalt/i.test(base.join('\n\n') + ' ' + String(contexte || ''));
-  const cta = estLicensing ? LICENSING_CTA_ : WHATSAPP_CTA_;
+  // 18/11/2026 : seul le lien de la page licensing est partagé (plus de WhatsApp).
+  const cta = LICENSING_CTA_;
 
   let replaced = false;
   for (let i = base.length - 1; i >= 0; i--) {
@@ -6620,6 +6682,8 @@ function processReplyAgentQueue_(context) {
     if (isCommercialPartnership && body) {
       body = stripEmoji_(applyWhatsAppCta_(body, reply.text));
     }
+    // Quelle que soit la catégorie : plus aucune mention WhatsApp (18/11/2026).
+    if (body) body = stripWhatsApp_(body);
 
     // Signature automatique : le brouillon se termine par « Best, » seul, la
     // signature complète est ajoutée sous le texte (pas de « Corentin » en double).
@@ -7617,6 +7681,7 @@ function watchdogBody_() {
     auditerBoiteReponses_(contextReponses);
     majSuiviOui_(contextReponses);
     ecrireTauxSegments_(contextReponses);
+    try { corrigerBrouillonsWhatsApp_(); } catch (e) { logJournal_('Brouillons', 'Erreur correction brouillons', safeError_(e)); }
   } catch (error) {
     logJournal_('réponses', 'Erreur copie', safeError_(error));
   }
@@ -7635,7 +7700,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Optimisation autonome : taux de réponse par segment (onglet « Taux par segment ») qui ordonne la file des 50 envois, adresses catch-all en fin de file, relances d’intégration réactivées pour les SaaS qui ont l’ID, copie des réponses sans blocage. Précédemment : Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Plus aucun lien ni phrase WhatsApp dans les réponses : seule la page licensing est partagée, et les brouillons déjà créés sont corrigés automatiquement. Précédemment : Optimisation autonome : taux de réponse par segment (onglet « Taux par segment ») qui ordonne la file des 50 envois, adresses catch-all en fin de file, relances d’intégration réactivées pour les SaaS qui ont l’ID, copie des réponses sans blocage. Précédemment : Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
