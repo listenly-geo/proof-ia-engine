@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-18-reponses-100-auto'
+  CODE_VERSION: '2026-11-18-licence-paiement-unique'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -6303,6 +6303,17 @@ function askReplyAgent_(apiKey, payload) {
     'fermement (H1), n\'a aucune bibliothèque de voix (modèles ouverts ' +
     'seulement) ou a déjà parlé de licence dans la conversation : dans ces ' +
     'cas, garde une clôture polie et courte. ' +
+    'MODÈLE DE LICENCE (décision d\'Etienne du 18/11/2026, REMPLACE tout ce que ' +
+    'dit le prompt ci-dessus sur « un paiement pour l\'intégration plus une ' +
+    'commission ») : quand on te demande comment fonctionne le licensing ou ' +
+    'comment il se passe, dis que c\'est une licence NON EXCLUSIVE avec un ' +
+    'PAIEMENT UNIQUE, pour une durée de 2 ans ou à vie, et renvoie vers la ' +
+    'page https://corentinvoice.live/#/licensing pour le détail. N\'écris ' +
+    'JAMAIS « commission », « royalties » ni « revenue share » comme offre ; ' +
+    'n\'invente aucun montant, aucune durée autre que 2 ans ou à vie, aucune ' +
+    'exclusivité. Si le SaaS parle de royalties, de pourcentage, d\'exclusivité ' +
+    'ou d\'un montant : ne réponds pas sur ces points, dis que le détail est sur ' +
+    'la page licensing, et mets human_review_required à true. ' +
     'Ajoute aussi un champ booléen "integration_confirmed" : true UNIQUEMENT ' +
     'si ce message précis confirme que la voix a été ajoutée/intégrée/mise ' +
     'en ligne chez eux (ex: "it\'s live", "we added it", "done, it\'s up", ' +
@@ -7530,7 +7541,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
