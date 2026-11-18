@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-18-reponses-simples-sans-cta'
+  CODE_VERSION: '2026-11-18-optimisation-autonome'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -1748,14 +1748,75 @@ function waitForSendSlot_() {
 
 // 10/11/2026 : les adresses « hello@ » rebondissent deux fois plus que les autres
 // (23 % contre 11 % en moyenne) : elles passent en dernier dans la file.
+// 18/11/2026 (décision d'Etienne : le moteur s'optimise seul d'après les données) :
+// taux de réponse par type de SaaS. Réponse positive = classification A, B, C, D,
+// E, F, G ou I, ou partenaire. Score lissé (évite de se fier à 2 envois) :
+// (positives + 1) / (envois + 10). Sert à ordonner la file des premiers mails.
+function statistiquesSegments_(context) {
+  const seg = {};
+  context.rows.forEach(function (row) {
+    const type = String(row['Type de SaaS'] || '').trim();
+    if (!type) return;
+    const s = seg[type] || (seg[type] = { envoyes: 0, reponses: 0, positives: 0 });
+    if (row['Date envoi']) s.envoyes++;
+    const etat = String(row['Statut prospection'] || '') + ' ' + String(row['État envoi'] || '');
+    const classe = String(row['Classification réponse IA'] || '').trim().toUpperCase().charAt(0);
+    const partenaire = /partenaire|voix intégrée/i.test(etat) || row['Voix ajoutée (confirmée)'] === true;
+    const repondu = /Réponse/.test(etat) || partenaire;
+    if (repondu) s.reponses++;
+    if (partenaire || 'ABCDEFGI'.indexOf(classe) !== -1 && classe) s.positives++;
+  });
+  Object.keys(seg).forEach(function (k) {
+    const s = seg[k];
+    s.score = (s.positives + 1) / (s.envoyes + 10);
+    s.tauxReponse = s.envoyes ? s.reponses / s.envoyes : 0;
+    s.tauxPositif = s.envoyes ? s.positives / s.envoyes : 0;
+  });
+  return seg;
+}
+
+// Onglet « Taux par segment » (lecture seule, remis à jour chaque heure).
+function ecrireTauxSegments_(context) {
+  const seg = statistiquesSegments_(context);
+  const lignes = Object.keys(seg).map(function (k) {
+    const s = seg[k];
+    return [k, s.envoyes, s.reponses, s.positives,
+      Math.round(s.tauxReponse * 1000) / 10 + ' %',
+      Math.round(s.tauxPositif * 1000) / 10 + ' %',
+      Math.round(s.score * 1000) / 1000];
+  }).filter(function (l) { return l[1] > 0; })
+    .sort(function (a, b) { return b[6] - a[6]; });
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  let sheet = ss.getSheetByName('Taux par segment');
+  if (!sheet) sheet = ss.insertSheet('Taux par segment');
+  sheet.clearContents();
+  const entete = ['Type de SaaS', 'Mails 1 envoyés', 'Réponses', 'Réponses positives',
+    'Taux de réponse', 'Taux positif', 'Score de priorité (file d’envoi)'];
+  sheet.getRange(1, 1, 1, entete.length).setValues([entete]).setFontWeight('bold');
+  if (lignes.length) sheet.getRange(2, 1, lignes.length, entete.length).setValues(lignes);
+  sheet.setFrozenRows(1);
+  return lignes;
+}
+
 function ordreEnvoiPremiersMails_(context) {
+  const seg = statistiquesSegments_(context);
+  const catchAll = JSON.parse(PropertiesService.getScriptProperties().getProperty('CATCHALL_IDS') || '{}');
   const sains = [];
   const risques = [];
 
   context.rows.forEach(function (row, i) {
     const local = String(row['Email public'] || '').split('@')[0].trim().toLowerCase();
-    (local === 'hello' ? risques : sains).push(i);
+    const incertain = local === 'hello' || catchAll[String(row['ID prospect'] || '')];
+    (incertain ? risques : sains).push(i);
   });
+
+  // Les segments qui répondent le plus passent en premier (à score égal, l'ordre
+  // de la feuille est conservé).
+  const scoreDe = function (i) {
+    const s = seg[String(context.rows[i]['Type de SaaS'] || '').trim()];
+    return s ? s.score : 1 / 10;
+  };
+  sains.sort(function (a, b) { return (scoreDe(b) - scoreDe(a)) || (a - b); });
 
   return sains.concat(risques);
 }
@@ -1879,6 +1940,20 @@ function processInitialQueue_(context, cap) {
         });
 
         continue;
+      }
+
+      // 18/11/2026 : adresse « catch-all » (le serveur accepte tout, donc risque de
+      // rebond ou de boîte non lue) : elle passe en fin de file au lieu d'être
+      // envoyée tout de suite ; elle part quand les adresses sûres sont épuisées.
+      if (verif.checked && verif.safe && /catch/i.test(String(verif.raw || ''))) {
+        const ids = JSON.parse(PropertiesService.getScriptProperties().getProperty('CATCHALL_IDS') || '{}');
+        const cle = String(row['ID prospect'] || '');
+        if (cle && !ids[cle]) {
+          ids[cle] = 1;
+          PropertiesService.getScriptProperties().setProperty('CATCHALL_IDS', JSON.stringify(ids));
+          logJournal_('vérif e-mail', 'ℹ️ catch-all reporté en fin de file', recipient);
+          continue;
+        }
       }
 
       if (verif.checked && !verif.safe) {
@@ -2828,10 +2903,10 @@ function joursDepuisNotreDernierMessage_(thread, recipient) {
 // par migrateConfirmedPartners_, donc une réponse positive confirmée arrête
 // la relance ET fait avancer le prospect dans le même mouvement.
 function processIntegrationReminders_(context) {
-  // 24/10/2026 : relances de confirmation d'intégration retirées du moteur.
-  // Etienne les gère lui-même. Ne rien envoyer ici, quel que soit le réglage.
-  return;
-  // eslint-disable-next-line no-unreachable
+  // 18/11/2026 (décision d'Etienne) : relances de confirmation d'intégration
+  // réactivées (SaaS qui ont reçu l'ID mais n'ont pas encore ajouté la voix).
+  // Garde-fous : au plus 3 par passage, et rien si notre dernier message date
+  // de plus de 30 jours. Réglage INTEGRATION_REMINDER_ENABLED.
   if (!getBoolSetting_('INTEGRATION_REMINDER_ENABLED')) return;
 
   const now = new Date();
@@ -2841,7 +2916,7 @@ function processIntegrationReminders_(context) {
   // Même plafond + délai que processFollowUps_, pour la même raison : éviter
   // qu'un gros lot de réponses reçues le même jour ne déclenche une rafale
   // de relances d'intégration en une seule minute.
-  let remaining = getNumberSetting_('MAX_FOLLOWUPS_PER_RUN', 10);
+  let remaining = Math.min(3, getNumberSetting_('MAX_FOLLOWUPS_PER_RUN', 10));
 
   for (let i = 0; i < context.rows.length && remaining > 0; i++) {
     const row = context.rows[i];
@@ -2885,6 +2960,7 @@ function processIntegrationReminders_(context) {
     // Le compte à rebours part de NOTRE dernier message (l'envoi de l'ID). Si le SaaS a
     // écrit après nous, on ne relance pas : sa réponse doit être traitée d'abord.
     if (joursDepuisNous === null || joursDepuisNous < j1) continue;
+    if (joursDepuisNous > 30) continue;
 
     try {
       if (joursDepuisNous >= j2 && !row['Relance intégration 2 envoyée']) {
@@ -7191,13 +7267,22 @@ function copierReponsesRecues_(context) {
     }
 
     read++;
+    // 18/11/2026 : une conversation introuvable ou sans message du prospect (rebond,
+    // réponse automatique, fil supprimé) ne peut jamais être copiée : on inscrit une
+    // ligne repère une seule fois, pour qu'elle ne reste pas « pas encore copiée ».
+    const reperer = function (texte) {
+      if (existing[threadId + '|n/a']) return;
+      existing[threadId + '|n/a'] = true;
+      out.push([now, 'n/a', row['Nom du SaaS'] || '', row['Email public'] || '',
+        statut || etat, row['Classification réponse IA'] || '', texte, threadId]);
+    };
     const thread = getThreadSafely_(threadId);
-    if (!thread) return;
+    if (!thread) { reperer('(conversation introuvable dans la boîte)'); return; }
 
     const fromProspect = thread.getMessages().filter(function (message) {
       return String(message.getFrom() || '').toLowerCase().indexOf(sender) === -1;
     });
-    if (!fromProspect.length) return;
+    if (!fromProspect.length) { reperer('(aucun message du prospect dans ce fil)'); return; }
 
     const last = fromProspect[fromProspect.length - 1];
     const dateMsg = Utilities.formatDate(last.getDate(), CONFIG.TIME_ZONE, 'yyyy-MM-dd HH:mm');
@@ -7531,6 +7616,7 @@ function watchdogBody_() {
     copierReponsesRecues_(contextReponses);
     auditerBoiteReponses_(contextReponses);
     majSuiviOui_(contextReponses);
+    ecrireTauxSegments_(contextReponses);
   } catch (error) {
     logJournal_('réponses', 'Erreur copie', safeError_(error));
   }
@@ -7549,7 +7635,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Optimisation autonome : taux de réponse par segment (onglet « Taux par segment ») qui ordonne la file des 50 envois, adresses catch-all en fin de file, relances d’intégration réactivées pour les SaaS qui ont l’ID, copie des réponses sans blocage. Précédemment : Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
