@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-18-licence-paiement-unique'
+  CODE_VERSION: '2026-11-18-reponses-simples-sans-cta'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -6525,11 +6525,19 @@ function processReplyAgentQueue_(context) {
     // on détecte quand même les sujets licensing dans le message reçu ou
     // dans la réponse, pour que le WhatsApp et la signature soient ajoutés.
     
+    // 18/11/2026 : les réponses simples (A ID de voix, E langues, F technique,
+    // I statut de la voix) ne reçoivent plus la demande WhatsApp / lien licensing
+    // juste parce que le message du SaaS contient « partner », « offer »... :
+    // elles gardent leur propre question de fin (« confirm once it's live »).
+    const simpleCategory = 'AEFI'.indexOf(classification.charAt(0)) !== -1 &&
+      !/^(AMBIGUOUS|J)/.test(classification) &&
+      classification.indexOf('COMMERCIAL_PARTNERSHIP') === -1;
     const isCommercialPartnership =
       classification === 'G' ||
       classification.indexOf('COMMERCIAL_PARTNERSHIP') !== -1 ||
-      isPartnershipText_(reply.text) ||
-      isPartnershipText_(result.reply_body);
+      (!simpleCategory && (
+        isPartnershipText_(reply.text) ||
+        isPartnershipText_(result.reply_body)));
 
     // Licensing (G) : la dernière question de l'IA est remplacée par une
     // phrase en gras proposant de discuter sur WhatsApp (lien direct).
