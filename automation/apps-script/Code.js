@@ -34,7 +34,7 @@ const CONFIG = Object.freeze({
   // l'éditeur Apps Script. Le rapport quotidien compare cette valeur à la
   // dernière vue pour signaler qu'une mise à jour a eu lieu (et donc vérifier
   // que le comportement correspond bien à ce qui était attendu).
-  CODE_VERSION: '2026-11-18-licensing-en-pause'
+  CODE_VERSION: '2026-11-19-rebonds-option2'
 });
 
 const VOICE_ID = 'IHngRooVccHyPqB4uQkG';
@@ -67,6 +67,8 @@ const DEFAULT_SETTINGS = [
   ['MAX_BOUNCES_PAUSE', '3', "Nombre de rebonds sur 3 jours qui met les nouveaux envois en pause."],
   ['EMAIL_VERIFY_ENABLED', 'FALSE',
     'TRUE = chaque e-mail est vérifié via l’API MyEmailVerifier juste avant le premier envoi ; s’il est invalide, aucun envoi n’est fait (évite le rebond). FALSE = aucune vérification, comportement d’avant.'],
+  ['EMAIL_STRICT', 'FALSE',
+    'FALSE (19/11/2026, option 2) = les adresses « inconnues » ou « greylistées » ne partent plus ; les catch-all partent en fin de file. TRUE = mode strict : seules les adresses confirmées « valides » partent (catch-all exclues aussi).'],
   ['EMAIL_VERIFY_API_KEY', '',
     'Clé API MyEmailVerifier (https://client.myemailverifier.com). Laisser vide pour désactiver même si EMAIL_VERIFY_ENABLED = TRUE.'],
   ['REPLY_AGENT_AUTO_SEND', 'TRUE',
@@ -1954,6 +1956,42 @@ function processInitialQueue_(context, cap) {
           ids[cle] = 1;
           PropertiesService.getScriptProperties().setProperty('CATCHALL_IDS', JSON.stringify(ids));
           logJournal_('vérif e-mail', 'ℹ️ catch-all reporté en fin de file', recipient);
+          continue;
+        }
+      }
+
+      // 19/11/2026 (décision d'Etienne, option 2) : une adresse que le vérificateur ne
+      // peut pas confirmer (« Unknown », « greylistée ») n'est plus envoyée : les
+      // rebonds viennent de là (6 % sur 3 jours, seuil 5 %). Une adresse greylistée
+      // (refus temporaire) est réessayée aux 3 passages suivants avant d'être mise de
+      // côté (statut dédié, rien n'est supprimé). Réglage EMAIL_STRICT = TRUE : on
+      // exclut aussi les catch-all (seules les adresses « valides » partent).
+      if (verif.checked && verif.safe && !verif.valid) {
+        const brut = String(verif.raw || '');
+        const estCatchAll = /catch/i.test(brut);
+        const exclure = !estCatchAll || getBoolSetting_('EMAIL_STRICT');
+
+        if (exclure) {
+          const cleEssai = String(row['ID prospect'] || '');
+          const essaiProps = PropertiesService.getScriptProperties();
+          const essais = JSON.parse(essaiProps.getProperty('GREYLIST_TRIES') || '{}');
+          const temporaire = /grey/i.test(brut);
+
+          if (temporaire && cleEssai && (essais[cleEssai] || 0) < 3) {
+            essais[cleEssai] = (essais[cleEssai] || 0) + 1;
+            essaiProps.setProperty('GREYLIST_TRIES', JSON.stringify(essais));
+            logJournal_('vérif e-mail', 'ℹ️ greylistée : réessai au prochain passage', recipient + ' (essai ' + essais[cleEssai] + '/3)');
+            continue;
+          }
+
+          writeFields_(context, sheetRow, {
+            'Envoyer': false,
+            'Statut prospection': 'Mis de côté — adresse non confirmée',
+            'État envoi': 'Mis de côté — adresse non confirmée « valide » par le vérificateur (' + brut.slice(0, 60) + ')',
+            'Erreur envoi': ''
+          });
+          logJournal_('vérif e-mail', 'ℹ️ mise de côté (non confirmée)', recipient + ' — ' + brut.slice(0, 80));
+
           continue;
         }
       }
@@ -7705,7 +7743,7 @@ function watchdogBody_() {
 // Ne contacte aucun prospect.
 // =================================================================
 const SANTE_SHEET_NAME = 'Santé moteur';
-const OBJECTIF_VERSION_COURANTE = 'Page licensing pas prête : aucune réponse automatique contenant son lien ne part (elle reste en brouillon) tant que le réglage LICENSING_PAGE_READY est FALSE. Précédemment : Réponses reçues : le message complet du SaaS (1500 caractères, sans citation) est copié dans le Sheet pour pouvoir y répondre sur consigne dans le chat. Précédemment : Licensing : le moteur dit seulement que le licensing est possible et renvoie vers la page licensing (plus aucune durée, exclusivité ni mode de paiement écrits). Précédemment : Plus aucun lien ni phrase WhatsApp dans les réponses : seule la page licensing est partagée, et les brouillons déjà créés sont corrigés automatiquement. Précédemment : Optimisation autonome : taux de réponse par segment (onglet « Taux par segment ») qui ordonne la file des 50 envois, adresses catch-all en fin de file, relances d’intégration réactivées pour les SaaS qui ont l’ID, copie des réponses sans blocage. Précédemment : Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
+const OBJECTIF_VERSION_COURANTE = 'Réduire les rebonds (option 2) : les adresses que le vérificateur ne peut pas confirmer (inconnues, greylistées) ne reçoivent plus de premier mail ; les catch-all partent toujours en fin de file ; mode strict possible (réglage EMAIL_STRICT). Précédemment : Page licensing pas prête : aucune réponse automatique contenant son lien ne part (elle reste en brouillon) tant que le réglage LICENSING_PAGE_READY est FALSE. Précédemment : Réponses reçues : le message complet du SaaS (1500 caractères, sans citation) est copié dans le Sheet pour pouvoir y répondre sur consigne dans le chat. Précédemment : Licensing : le moteur dit seulement que le licensing est possible et renvoie vers la page licensing (plus aucune durée, exclusivité ni mode de paiement écrits). Précédemment : Plus aucun lien ni phrase WhatsApp dans les réponses : seule la page licensing est partagée, et les brouillons déjà créés sont corrigés automatiquement. Précédemment : Optimisation autonome : taux de réponse par segment (onglet « Taux par segment ») qui ordonne la file des 50 envois, adresses catch-all en fin de file, relances d’intégration réactivées pour les SaaS qui ont l’ID, copie des réponses sans blocage. Précédemment : Licensing : le moteur présente maintenant une licence non exclusive à paiement unique (2 ans ou à vie) au lieu de « paiement plus commission ». Précédemment : Réponses 100 % automatiques : toutes les catégories partent seules, sauf contrat/montant/exclusivité/confiance faible (brouillon). Précédemment : Réponses automatiques palier 1 : refus polis et simples intérêts licensing partent seuls après 1 à 2 h (annulable), plafond 8/jour, le reste reste en brouillon. Précédemment : Réponses licencing : le lien de la page licensing (corentinvoice.live/#/licensing, qui renvoie vers WhatsApp) remplace le lien WhatsApp direct. Précédemment : réponses aux refus ElevenLabs : le brouillon propose maintenant un contrat de licence (phrase du mail 1 + question en gras), sauf refus ferme ou SaaS sans bibliothèque de voix. Précédemment : vérificateur d’adresses réparé : il appelait une mauvaise adresse et ne vérifiait rien, il bloque maintenant les adresses invalides avant l’envoi. Précédemment : partenaire actif automatique : quand un SaaS répond que ta voix marche déjà chez lui avec le Voice ID (ex. NanoGPT), il passe seul dans Partenaires actifs et ses relances s’arrêtent. Précédemment : réduire les rebonds : une adresse hello@ ne part que si le vérificateur répond « valide » (sinon mise de côté). Précédemment : les rebonds passagers ne comptent plus et sont réessayés, la réponse du vérificateur d’adresse est journalisée, les adresses hello@ partent en dernier. Rappel : nouveau mail 1 (question sur la bibliothèque de voix, preuve par les grandes marques, phrase de licensing, soulignement). Rappel : priorité aux nouveaux contacts : les relances classiques sont limitées à 10 par jour (réglage MAX_FOLLOWUPS_PER_DAY). Rappel de la version précédente : éviter le blocage « Trop d’appels Gmail » : l’agent IA et la copie des réponses ne relisent plus tous les fils, seulement ceux qui ont reçu un message. Détection des réponses par une seule recherche, bilan santé horaire avec réparation automatique et alerte e-mail.';
 
 function getSanteSheet_() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
